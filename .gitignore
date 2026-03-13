@@ -1,14 +1,23 @@
 # Kernel module build artifacts
 *.o
 *.ko
+*.kld
 *.ko.debug
 *.mod
 *.mod.c
 .depend*
 export_syms
+opt_*.h
+
+# Build symlinks (created by FreeBSD kmod build)
 machine
 x86
-opt_*.h
+i386
+
+# Test build artifacts
+*.pieo
+*.full
+*.debug
 
 # Test binaries
 tests/kv_test
@@ -24,3 +33,4 @@ tests/kv_fdpass_client
 
 # Deployment artifacts
 keyvault.tar.gz
+kv_test
