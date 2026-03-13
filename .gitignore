@@ -1,0 +1,26 @@
+# Kernel module build artifacts
+*.o
+*.ko
+*.ko.debug
+*.mod
+*.mod.c
+.depend*
+export_syms
+machine
+x86
+opt_*.h
+
+# Test binaries
+tests/kv_test
+tests/kv_fdpass_server
+tests/kv_fdpass_client
+
+# Editor/IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Deployment artifacts
+keyvault.tar.gz
