@@ -63,14 +63,20 @@ The module requires access to FreeBSD kernel source headers:
 | AES-256-GCM   | OpenCrypto        | crypto.ko    |
 | AES-128-CBC   | OpenCrypto        | crypto.ko    |
 | AES-256-CBC   | OpenCrypto        | crypto.ko    |
+| ChaCha20-Poly1305 | OpenCrypto    | crypto.ko    |
 | HMAC-SHA256   | OpenCrypto        | crypto.ko    |
 | HMAC-SHA512   | OpenCrypto        | crypto.ko    |
 | SHA-256       | OpenCrypto        | crypto.ko    |
 | SHA-512       | OpenCrypto        | crypto.ko    |
 | Ed25519       | ed25519_ref10 + SHA-512 | crypto.ko |
+| X25519        | curve25519.h      | kernel built-in |
+| HKDF-SHA256   | SHA-256 (direct)  | kernel built-in |
+| HKDF-SHA512   | SHA-512 (direct)  | kernel built-in |
 
 ## Notes
 
-- The Ed25519 implementation is self-contained within keyvault.ko for the sign/verify logic, but relies on crypto.ko for the mathematical primitives
+- The Ed25519 implementation is self-contained within keyvault.ko for the sign/verify logic, but relies on crypto.ko for the mathematical primitives (ge25519_*, sc25519_*)
+- X25519 uses FreeBSD's built-in `<crypto/curve25519.h>` which provides `curve25519()` and `curve25519_generate_public()`
+- HKDF is implemented directly using SHA-256/SHA-512 from `<crypto/sha2/sha256.h>` and `<crypto/sha2/sha512.h>`
 - All cryptographic operations use kernel-approved random number generation via `arc4random_buf()`
-- Key material never leaves kernel space; only public keys can be exported for Ed25519
+- Key material never leaves kernel space; only public keys can be exported for asymmetric algorithms (Ed25519, X25519)

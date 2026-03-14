@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * X25519 key exchange interface for FreeBSD kernel
  */

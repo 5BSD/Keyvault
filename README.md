@@ -18,8 +18,11 @@ Userspace receives only opaque key identifiers and performs crypto operations vi
 
 | Type | Algorithms |
 |------|------------|
-| AEAD | AES-128-GCM, AES-256-GCM |
+| AEAD | AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 |
 | Cipher | AES-128-CBC, AES-256-CBC |
+| Signatures | Ed25519 |
+| Key Exchange | X25519 |
+| Key Derivation | HKDF-SHA256, HKDF-SHA512 |
 | MAC | HMAC-SHA256, HMAC-SHA512 |
 | Hash | SHA-256, SHA-512 |
 
@@ -103,12 +106,16 @@ sendmsg(sock, &msg, 0);
 | `KV_CAP_REVOKE` | Revoke keys |
 | `KV_CAP_ENCRYPT` | Encrypt data |
 | `KV_CAP_DECRYPT` | Decrypt data |
-| `KV_CAP_SIGN` | Sign data (Phase 2) |
+| `KV_CAP_SIGN` | Sign data (Ed25519) |
 | `KV_CAP_VERIFY` | Verify signatures |
 | `KV_CAP_MAC` | Compute MACs |
 | `KV_CAP_HASH` | Compute hashes |
 | `KV_CAP_GETINFO` | Query key info |
 | `KV_CAP_LIST` | List keys |
+| `KV_CAP_RESTRICT` | Further restrict capabilities |
+| `KV_CAP_DERIVE` | Derive keys (HKDF) |
+| `KV_CAP_EXCHANGE` | Perform key exchange (X25519) |
+| `KV_CAP_IMPORT` | Import keys |
 | `KV_CAP_ALL` | All capabilities (default) |
 | `KV_CAP_READONLY` | Encrypt/decrypt/sign/verify/mac/hash/info/list |
 
@@ -144,7 +151,3 @@ dtrace -n 'keyvault:::cap-denied { printf("wanted=%x have=%x", arg0, arg1); }'
 ## License
 
 BSD-2-Clause
-
-## See Also
-
-- [PLAN.md](PLAN.md) - Detailed implementation plan and roadmap

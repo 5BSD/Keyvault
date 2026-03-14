@@ -4496,6 +4496,786 @@ test_x25519_capability_restriction(void)
 	return (0);
 }
 
+/*
+ * Test: Import Ed25519 key from seed
+ */
+static int
+test_import_ed25519(void)
+{
+	int fd;
+	struct kv_import_req impreq;
+	struct kv_sign_req signreq;
+	struct kv_verify_req verifyreq;
+	struct kv_getpubkey_req pubkeyreq;
+	/* Known test seed (32 bytes) */
+	unsigned char seed[32] = {
+		0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+		0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+		0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+		0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60
+	};
+	const char *message = "test message";
+	unsigned char signature[64];
+	unsigned char pubkey[32];
+
+	TEST_START("import Ed25519 key");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Import Ed25519 key from seed */
+	memset(&impreq, 0, sizeof(impreq));
+	impreq.algorithm = KV_ALG_ED25519;
+	impreq.key_material = seed;
+	impreq.key_len = sizeof(seed);
+
+	if (ioctl(fd, KV_IOC_IMPORT, &impreq) < 0) {
+		TEST_FAIL("import");
+		close(fd);
+		return (1);
+	}
+
+	/* Get public key */
+	memset(&pubkeyreq, 0, sizeof(pubkeyreq));
+	pubkeyreq.key_id = impreq.key_id;
+	pubkeyreq.pubkey = pubkey;
+	pubkeyreq.pubkey_len = sizeof(pubkey);
+
+	if (ioctl(fd, KV_IOC_GET_PUBKEY, &pubkeyreq) < 0) {
+		TEST_FAIL("get_pubkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Sign a message */
+	memset(&signreq, 0, sizeof(signreq));
+	signreq.key_id = impreq.key_id;
+	signreq.data = message;
+	signreq.data_len = strlen(message);
+	signreq.signature = signature;
+	signreq.signature_len = sizeof(signature);
+
+	if (ioctl(fd, KV_IOC_SIGN, &signreq) < 0) {
+		TEST_FAIL("sign");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify signature */
+	memset(&verifyreq, 0, sizeof(verifyreq));
+	verifyreq.key_id = impreq.key_id;
+	verifyreq.data = message;
+	verifyreq.data_len = strlen(message);
+	verifyreq.signature = signature;
+	verifyreq.signature_len = sizeof(signature);
+
+	if (ioctl(fd, KV_IOC_VERIFY, &verifyreq) < 0) {
+		TEST_FAIL("verify");
+		close(fd);
+		return (1);
+	}
+
+	if (!verifyreq.valid) {
+		TEST_FAIL("signature not valid");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Import X25519 key
+ */
+static int
+test_import_x25519(void)
+{
+	int fd, fd2;
+	struct kv_import_req impreq;
+	struct kv_genkey_req genreq;
+	struct kv_getpubkey_req pubkeyreq;
+	struct kv_keyexchange_req kexreq1, kexreq2;
+	/* Known test secret key (32 bytes) */
+	unsigned char secret[32] = {
+		0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d,
+		0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45,
+		0xdf, 0x4c, 0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a,
+		0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9, 0x2c, 0x2a
+	};
+	unsigned char pubkey1[32], pubkey2[32];
+	unsigned char shared1[32], shared2[32];
+
+	TEST_START("import X25519 key");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open fd1");
+		return (1);
+	}
+
+	fd2 = open(DEVICE_PATH, O_RDWR);
+	if (fd2 < 0) {
+		TEST_FAIL("open fd2");
+		close(fd);
+		return (1);
+	}
+
+	/* Import X25519 key from secret */
+	memset(&impreq, 0, sizeof(impreq));
+	impreq.algorithm = KV_ALG_X25519;
+	impreq.key_material = secret;
+	impreq.key_len = sizeof(secret);
+
+	if (ioctl(fd, KV_IOC_IMPORT, &impreq) < 0) {
+		TEST_FAIL("import");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	/* Get public key of imported key */
+	memset(&pubkeyreq, 0, sizeof(pubkeyreq));
+	pubkeyreq.key_id = impreq.key_id;
+	pubkeyreq.pubkey = pubkey1;
+	pubkeyreq.pubkey_len = sizeof(pubkey1);
+
+	if (ioctl(fd, KV_IOC_GET_PUBKEY, &pubkeyreq) < 0) {
+		TEST_FAIL("get_pubkey imported");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	/* Generate a second X25519 key on fd2 */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_X25519;
+
+	if (ioctl(fd2, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	/* Get public key of generated key */
+	memset(&pubkeyreq, 0, sizeof(pubkeyreq));
+	pubkeyreq.key_id = genreq.key_id;
+	pubkeyreq.pubkey = pubkey2;
+	pubkeyreq.pubkey_len = sizeof(pubkey2);
+
+	if (ioctl(fd2, KV_IOC_GET_PUBKEY, &pubkeyreq) < 0) {
+		TEST_FAIL("get_pubkey generated");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	/* Key exchange: imported key with generated pubkey */
+	memset(&kexreq1, 0, sizeof(kexreq1));
+	kexreq1.key_id = impreq.key_id;
+	kexreq1.peer_pubkey = pubkey2;
+	kexreq1.peer_pubkey_len = sizeof(pubkey2);
+	kexreq1.shared_secret = shared1;
+	kexreq1.shared_secret_len = sizeof(shared1);
+
+	if (ioctl(fd, KV_IOC_KEYEXCHANGE, &kexreq1) < 0) {
+		TEST_FAIL("keyexchange 1");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	/* Key exchange: generated key with imported pubkey */
+	memset(&kexreq2, 0, sizeof(kexreq2));
+	kexreq2.key_id = genreq.key_id;
+	kexreq2.peer_pubkey = pubkey1;
+	kexreq2.peer_pubkey_len = sizeof(pubkey1);
+	kexreq2.shared_secret = shared2;
+	kexreq2.shared_secret_len = sizeof(shared2);
+
+	if (ioctl(fd2, KV_IOC_KEYEXCHANGE, &kexreq2) < 0) {
+		TEST_FAIL("keyexchange 2");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	/* Verify shared secrets match */
+	if (memcmp(shared1, shared2, 32) != 0) {
+		TEST_FAIL("shared secrets don't match");
+		close(fd);
+		close(fd2);
+		return (1);
+	}
+
+	close(fd);
+	close(fd2);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Import symmetric key (AES-256-GCM)
+ */
+static int
+test_import_symmetric(void)
+{
+	int fd;
+	struct kv_import_req impreq;
+	struct kv_aead_encrypt_req encreq;
+	struct kv_aead_decrypt_req decreq;
+	/* Known 256-bit key */
+	unsigned char key[32] = {
+		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+		0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+		0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+		0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+	};
+	const char *plaintext = "test plaintext for imported key";
+	char ciphertext[64];
+	char decrypted[64];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("import symmetric key");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Import AES-256-GCM key */
+	memset(&impreq, 0, sizeof(impreq));
+	impreq.algorithm = KV_ALG_AES256_GCM;
+	impreq.key_material = key;
+	impreq.key_len = sizeof(key);
+
+	if (ioctl(fd, KV_IOC_IMPORT, &impreq) < 0) {
+		TEST_FAIL("import");
+		close(fd);
+		return (1);
+	}
+
+	/* Encrypt */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = impreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+	encreq.tag_len = sizeof(tag);
+
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
+		TEST_FAIL("encrypt");
+		close(fd);
+		return (1);
+	}
+
+	/* Decrypt */
+	memset(&decreq, 0, sizeof(decreq));
+	memset(decrypted, 0, sizeof(decrypted));
+	decreq.key_id = impreq.key_id;
+	decreq.ciphertext = ciphertext;
+	decreq.ciphertext_len = encreq.ciphertext_len;
+	decreq.nonce = nonce;
+	decreq.nonce_len = 12;
+	decreq.tag = tag;
+	decreq.tag_len = 16;
+	decreq.plaintext = decrypted;
+	decreq.plaintext_len = sizeof(decrypted);
+
+	if (ioctl(fd, KV_IOC_AEAD_DECRYPT, &decreq) < 0) {
+		TEST_FAIL("decrypt");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify decryption */
+	if (decreq.plaintext_len != strlen(plaintext) ||
+	    memcmp(decrypted, plaintext, strlen(plaintext)) != 0) {
+		TEST_FAIL("decryption mismatch");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: HKDF with different output algorithms
+ */
+static int
+test_hkdf_output_algorithm_aes(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_derive_req derivereq;
+	struct kv_keyinfo_req inforeq;
+	struct kv_aead_encrypt_req encreq;
+	const char *info = "aes key derivation";
+	const char *plaintext = "test data";
+	char ciphertext[32];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("HKDF output algorithm (AES-256-GCM)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate source key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_HMAC_SHA256;
+	genreq.key_bits = 256;
+
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Derive AES-256-GCM key */
+	memset(&derivereq, 0, sizeof(derivereq));
+	derivereq.key_id = genreq.key_id;
+	derivereq.algorithm = KV_ALG_HKDF_SHA256;
+	derivereq.output_bits = 256;
+	derivereq.output_algorithm = KV_ALG_AES256_GCM;
+	derivereq.info = info;
+	derivereq.info_len = strlen(info);
+
+	if (ioctl(fd, KV_IOC_DERIVE, &derivereq) < 0) {
+		TEST_FAIL("derive");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify derived key info */
+	memset(&inforeq, 0, sizeof(inforeq));
+	inforeq.key_id = derivereq.derived_key_id;
+
+	if (ioctl(fd, KV_IOC_GETINFO, &inforeq) < 0) {
+		TEST_FAIL("getinfo");
+		close(fd);
+		return (1);
+	}
+
+	if (inforeq.algorithm != KV_ALG_AES256_GCM) {
+		TEST_FAIL("wrong algorithm");
+		close(fd);
+		return (1);
+	}
+
+	/* Use derived key for encryption */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = derivereq.derived_key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+	encreq.tag_len = sizeof(tag);
+
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
+		TEST_FAIL("encrypt with derived key");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: HKDF output algorithm ChaCha20-Poly1305
+ */
+static int
+test_hkdf_output_algorithm_chacha(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_derive_req derivereq;
+	struct kv_keyinfo_req inforeq;
+	struct kv_aead_encrypt_req encreq;
+	const char *info = "chacha key derivation";
+	const char *plaintext = "test data";
+	char ciphertext[32];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("HKDF output algorithm (ChaCha20-Poly1305)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate source key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_HMAC_SHA256;
+	genreq.key_bits = 256;
+
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Derive ChaCha20-Poly1305 key */
+	memset(&derivereq, 0, sizeof(derivereq));
+	derivereq.key_id = genreq.key_id;
+	derivereq.algorithm = KV_ALG_HKDF_SHA256;
+	derivereq.output_bits = 256;
+	derivereq.output_algorithm = KV_ALG_CHACHA20_POLY1305;
+	derivereq.info = info;
+	derivereq.info_len = strlen(info);
+
+	if (ioctl(fd, KV_IOC_DERIVE, &derivereq) < 0) {
+		TEST_FAIL("derive");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify derived key info */
+	memset(&inforeq, 0, sizeof(inforeq));
+	inforeq.key_id = derivereq.derived_key_id;
+
+	if (ioctl(fd, KV_IOC_GETINFO, &inforeq) < 0) {
+		TEST_FAIL("getinfo");
+		close(fd);
+		return (1);
+	}
+
+	if (inforeq.algorithm != KV_ALG_CHACHA20_POLY1305) {
+		TEST_FAIL("wrong algorithm");
+		close(fd);
+		return (1);
+	}
+
+	/* Use derived key for encryption */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = derivereq.derived_key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+	encreq.tag_len = sizeof(tag);
+
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
+		TEST_FAIL("encrypt with derived key");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: HKDF default output algorithm (should be HMAC-SHA256)
+ */
+static int
+test_hkdf_output_algorithm_default(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_derive_req derivereq;
+	struct kv_keyinfo_req inforeq;
+
+	TEST_START("HKDF default output algorithm");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate source key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_HMAC_SHA256;
+	genreq.key_bits = 256;
+
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Derive with output_algorithm = 0 (default) */
+	memset(&derivereq, 0, sizeof(derivereq));
+	derivereq.key_id = genreq.key_id;
+	derivereq.algorithm = KV_ALG_HKDF_SHA256;
+	derivereq.output_bits = 256;
+	derivereq.output_algorithm = 0;  /* Default */
+
+	if (ioctl(fd, KV_IOC_DERIVE, &derivereq) < 0) {
+		TEST_FAIL("derive");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify derived key is HMAC-SHA256 */
+	memset(&inforeq, 0, sizeof(inforeq));
+	inforeq.key_id = derivereq.derived_key_id;
+
+	if (ioctl(fd, KV_IOC_GETINFO, &inforeq) < 0) {
+		TEST_FAIL("getinfo");
+		close(fd);
+		return (1);
+	}
+
+	if (inforeq.algorithm != KV_ALG_HMAC_SHA256) {
+		TEST_FAIL("wrong default algorithm");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Sign/verify empty message
+ */
+static int
+test_ed25519_empty_message(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_sign_req signreq;
+	struct kv_verify_req verifyreq;
+	unsigned char signature[64];
+
+	TEST_START("Ed25519 sign/verify empty message");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate Ed25519 key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_ED25519;
+
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Sign empty message */
+	memset(&signreq, 0, sizeof(signreq));
+	signreq.key_id = genreq.key_id;
+	signreq.data = NULL;
+	signreq.data_len = 0;
+	signreq.signature = signature;
+	signreq.signature_len = sizeof(signature);
+
+	if (ioctl(fd, KV_IOC_SIGN, &signreq) < 0) {
+		TEST_FAIL("sign empty message");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify empty message signature */
+	memset(&verifyreq, 0, sizeof(verifyreq));
+	verifyreq.key_id = genreq.key_id;
+	verifyreq.data = NULL;
+	verifyreq.data_len = 0;
+	verifyreq.signature = signature;
+	verifyreq.signature_len = sizeof(signature);
+
+	if (ioctl(fd, KV_IOC_VERIFY, &verifyreq) < 0) {
+		TEST_FAIL("verify");
+		close(fd);
+		return (1);
+	}
+
+	if (!verifyreq.valid) {
+		TEST_FAIL("empty message signature not valid");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Concurrent key operations (stress test)
+ */
+static int
+test_concurrent_operations(void)
+{
+	int fds[10];
+	struct kv_genkey_req genreqs[10];
+	struct kv_aead_encrypt_req encreq;
+	struct kv_aead_decrypt_req decreq;
+	const char *plaintext = "concurrent test data";
+	char ciphertext[64];
+	char decrypted[64];
+	char nonce[12];
+	char tag[16];
+	int i;
+	pid_t pid;
+	int status;
+
+	TEST_START("concurrent key operations");
+
+	/* Open multiple file descriptors */
+	for (i = 0; i < 10; i++) {
+		fds[i] = open(DEVICE_PATH, O_RDWR);
+		if (fds[i] < 0) {
+			TEST_FAIL("open");
+			while (--i >= 0)
+				close(fds[i]);
+			return (1);
+		}
+	}
+
+	/* Generate keys on each fd */
+	for (i = 0; i < 10; i++) {
+		memset(&genreqs[i], 0, sizeof(genreqs[i]));
+		genreqs[i].algorithm = KV_ALG_AES256_GCM;
+		genreqs[i].key_bits = 256;
+
+		if (ioctl(fds[i], KV_IOC_GENKEY, &genreqs[i]) < 0) {
+			TEST_FAIL("genkey");
+			for (i = 0; i < 10; i++)
+				close(fds[i]);
+			return (1);
+		}
+	}
+
+	/* Fork child processes to do concurrent operations */
+	for (i = 0; i < 5; i++) {
+		pid = fork();
+		if (pid == 0) {
+			/* Child: encrypt/decrypt loop */
+			int j;
+			for (j = 0; j < 100; j++) {
+				memset(&encreq, 0, sizeof(encreq));
+				encreq.key_id = genreqs[i].key_id;
+				encreq.plaintext = plaintext;
+				encreq.plaintext_len = strlen(plaintext);
+				encreq.ciphertext = ciphertext;
+				encreq.ciphertext_len = sizeof(ciphertext);
+				encreq.nonce_out = nonce;
+				encreq.tag = tag;
+				encreq.tag_len = sizeof(tag);
+
+				if (ioctl(fds[i], KV_IOC_AEAD_ENCRYPT, &encreq) < 0)
+					_exit(1);
+
+				memset(&decreq, 0, sizeof(decreq));
+				decreq.key_id = genreqs[i].key_id;
+				decreq.ciphertext = ciphertext;
+				decreq.ciphertext_len = encreq.ciphertext_len;
+				decreq.nonce = nonce;
+				decreq.nonce_len = 12;
+				decreq.tag = tag;
+				decreq.tag_len = 16;
+				decreq.plaintext = decrypted;
+				decreq.plaintext_len = sizeof(decrypted);
+
+				if (ioctl(fds[i], KV_IOC_AEAD_DECRYPT, &decreq) < 0)
+					_exit(1);
+			}
+			_exit(0);
+		} else if (pid < 0) {
+			TEST_FAIL("fork");
+			for (i = 0; i < 10; i++)
+				close(fds[i]);
+			return (1);
+		}
+	}
+
+	/* Wait for all children */
+	for (i = 0; i < 5; i++) {
+		wait(&status);
+		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+			TEST_FAIL("child failed");
+			for (i = 0; i < 10; i++)
+				close(fds[i]);
+			return (1);
+		}
+	}
+
+	/* Cleanup */
+	for (i = 0; i < 10; i++)
+		close(fds[i]);
+
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Rapid key create/destroy (stress test)
+ */
+static int
+test_rapid_key_lifecycle(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_destroy_req destroyreq;
+	int i;
+
+	TEST_START("rapid key create/destroy");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Rapidly create and destroy keys */
+	for (i = 0; i < 1000; i++) {
+		memset(&genreq, 0, sizeof(genreq));
+		genreq.algorithm = KV_ALG_AES256_GCM;
+		genreq.key_bits = 256;
+
+		if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+			TEST_FAIL("genkey");
+			close(fd);
+			return (1);
+		}
+
+		memset(&destroyreq, 0, sizeof(destroyreq));
+		destroyreq.key_id = genreq.key_id;
+
+		if (ioctl(fd, KV_IOC_DESTROY, &destroyreq) < 0) {
+			TEST_FAIL("destroy");
+			close(fd);
+			return (1);
+		}
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -4585,6 +5365,19 @@ main(int argc, char *argv[])
 	test_hkdf_consistency();
 	test_hkdf_from_keyexchange();
 	test_hkdf_capability_restriction();
+	test_hkdf_output_algorithm_aes();
+	test_hkdf_output_algorithm_chacha();
+	test_hkdf_output_algorithm_default();
+
+	/* Key Import */
+	printf("\n--- Key Import ---\n");
+	test_import_ed25519();
+	test_import_x25519();
+	test_import_symmetric();
+
+	/* Empty Message Handling */
+	printf("\n--- Empty Message Handling ---\n");
+	test_ed25519_empty_message();
 
 	/* Sysctl tunables */
 	printf("\n--- Sysctl Tunables ---\n");
@@ -4595,6 +5388,11 @@ main(int argc, char *argv[])
 	/* Advanced features */
 	printf("\n--- Advanced Features ---\n");
 	test_fd_passing();
+
+	/* Stress Tests */
+	printf("\n--- Stress Tests ---\n");
+	test_rapid_key_lifecycle();
+	test_concurrent_operations();
 
 	printf("\n===========================================\n");
 	printf("Results: %d/%d tests passed\n", tests_passed, tests_run);

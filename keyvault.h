@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Keyvault - Secure kernel-space key storage and cryptographic operations
  *
@@ -33,12 +33,14 @@
 #define KV_ALG_HMAC_SHA256      20
 #define KV_ALG_HMAC_SHA512      21
 
-/* Asymmetric algorithms (Phase 2) */
-#define KV_ALG_ED25519          30
-
-/* Phase 3 algorithms */
-#define KV_ALG_CHACHA20_POLY1305 40	/* ChaCha20-Poly1305 AEAD */
+/* Asymmetric algorithms */
+#define KV_ALG_ED25519          30	/* Ed25519 digital signatures */
 #define KV_ALG_X25519           41	/* X25519 key exchange */
+
+/* Additional AEAD */
+#define KV_ALG_CHACHA20_POLY1305 40	/* ChaCha20-Poly1305 AEAD */
+
+/* Key derivation */
 #define KV_ALG_HKDF_SHA256      50	/* HKDF with SHA-256 */
 #define KV_ALG_HKDF_SHA512      51	/* HKDF with SHA-512 */
 
@@ -257,6 +259,8 @@ struct kv_derive_req {
 	uint64_t        key_id;         /* in: input key material (IKM) */
 	uint32_t        algorithm;      /* in: KV_ALG_HKDF_SHA256/512 */
 	uint32_t        output_bits;    /* in: output key size in bits */
+	uint32_t        output_algorithm; /* in: algorithm for derived key (0=HMAC-SHA256) */
+	uint32_t        _pad;
 	const void     *salt;           /* in: optional salt (NULL for zeros) */
 	size_t          salt_len;       /* in: salt length */
 	const void     *info;           /* in: optional context info */
@@ -298,7 +302,7 @@ struct kv_import_req {
 #define KV_IOC_HASH         _IOWR('K', 23, struct kv_hash_req)
 #define KV_IOC_GET_PUBKEY   _IOWR('K', 24, struct kv_getpubkey_req)
 
-/* Phase 3: Key exchange and derivation */
+/* Key exchange and derivation */
 #define KV_IOC_KEYEXCHANGE  _IOWR('K', 30, struct kv_keyexchange_req)
 #define KV_IOC_DERIVE       _IOWR('K', 31, struct kv_derive_req)
 
@@ -317,5 +321,25 @@ struct kv_import_req {
  */
 #define KV_HKDF_MAX_INFO_SIZE   1024
 #define KV_HKDF_MAX_OUTPUT_SIZE 8160  /* 255 * 32 for SHA-256 */
+
+/*
+ * AEAD constants (AES-GCM, ChaCha20-Poly1305)
+ */
+#define KV_AEAD_NONCE_SIZE      12    /* 96-bit nonce for GCM/ChaCha20 */
+#define KV_AEAD_TAG_SIZE        16    /* 128-bit authentication tag */
+
+/*
+ * AES-CBC constants
+ */
+#define KV_AES_BLOCK_SIZE       16    /* AES block size */
+#define KV_AES_IV_SIZE          16    /* IV size for CBC mode */
+
+/*
+ * Ed25519 constants (also defined in keyvault_ed25519.h for kernel)
+ */
+#define KV_ED25519_SEED_SIZE      32
+#define KV_ED25519_PUBLIC_SIZE    32
+#define KV_ED25519_SECRET_SIZE    64
+#define KV_ED25519_SIGNATURE_SIZE 64
 
 #endif /* _KEYVAULT_H_ */

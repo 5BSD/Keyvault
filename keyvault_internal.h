@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Keyvault - Internal kernel structures
  *
@@ -83,6 +83,35 @@ extern unsigned int kv_max_data_size;
  * Memory allocation type
  */
 MALLOC_DECLARE(M_KEYVAULT);
+
+/*
+ * Lock Ordering
+ *
+ * The keyvault module uses three mutex types with a strict ordering
+ * to prevent deadlocks:
+ *
+ *   sc_mtx (device) > kf_mtx (file) > kk_mtx (key)
+ *
+ * This means:
+ *   - When holding kk_mtx, you must NOT acquire kf_mtx or sc_mtx
+ *   - When holding kf_mtx, you must NOT acquire sc_mtx
+ *   - You may acquire multiple kk_mtx locks if you hold kf_mtx,
+ *     but must acquire them in key_id order to prevent deadlock
+ *
+ * Sleep points:
+ *   - crypto_freesession() may sleep, so must NOT be called while
+ *     holding any mutex
+ *   - malloc(M_WAITOK) may sleep, so allocations should be done
+ *     before acquiring locks when possible
+ *
+ * Reference counting:
+ *   - Keys use reference counting (kk_refcnt) to allow crypto
+ *     operations to proceed without holding kf_mtx
+ *   - kv_key_acquire() takes kf_mtx to find key, then takes kk_mtx
+ *     to check state and increment refcount
+ *   - kv_key_release() may free the key (calling crypto_freesession),
+ *     so must NOT be called while holding any mutex
+ */
 
 /*
  * Forward declarations
@@ -229,6 +258,12 @@ int             kv_key_getinfo(struct kv_file *kf, uint64_t key_id,
                                struct kv_keyinfo_req *info);
 int             kv_key_list(struct kv_file *kf, uint64_t *ids,
                             uint32_t max_keys, uint32_t *num_keys);
+
+/* Internal: create symmetric key from provided material (for HKDF) */
+int             kv_key_create_from_material(struct kv_file *kf,
+                               uint32_t algorithm,
+                               const uint8_t *material, size_t matlen,
+                               uint64_t *key_id_out);
 
 /*
  * Function prototypes - keyvault_crypto.c

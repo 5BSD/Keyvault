@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Ed25519 digital signature implementation for keyvault
  *
@@ -15,46 +15,7 @@
 
 #include "keyvault_ed25519.h"
 #include "crypto_compat.h"
-
-/*
- * Ed25519 primitive declarations from crypto.ko
- * These are provided by libsodium's ed25519_ref10.c compiled into crypto.ko
- */
-
-/* Field element type - depends on HAVE_TI_MODE */
-#ifdef HAVE_TI_MODE
-typedef uint64_t fe25519[5];
-#else
-typedef int32_t fe25519[10];
-#endif
-
-/* Group element types */
-typedef struct {
-	fe25519 X;
-	fe25519 Y;
-	fe25519 Z;
-} ge25519_p2;
-
-typedef struct {
-	fe25519 X;
-	fe25519 Y;
-	fe25519 Z;
-	fe25519 T;
-} ge25519_p3;
-
-/* External functions from crypto.ko */
-extern void ge25519_scalarmult_base(ge25519_p3 *h, const unsigned char *a);
-extern void ge25519_p3_tobytes(unsigned char *s, const ge25519_p3 *h);
-extern void ge25519_tobytes(unsigned char *s, const ge25519_p2 *h);
-extern int ge25519_frombytes_negate_vartime(ge25519_p3 *h, const unsigned char *s);
-extern void ge25519_double_scalarmult_vartime(ge25519_p2 *r, const unsigned char *a,
-    const ge25519_p3 *A, const unsigned char *b);
-extern int ge25519_has_small_order(const unsigned char s[32]);
-extern int ge25519_is_canonical(const unsigned char *s);
-extern void sc25519_reduce(unsigned char *s);
-extern void sc25519_muladd(unsigned char *s, const unsigned char *a,
-    const unsigned char *b, const unsigned char *c);
-extern int sc25519_is_canonical(const unsigned char *s);
+#include "ge25519.h"
 
 /*
  * Clamp a secret key scalar

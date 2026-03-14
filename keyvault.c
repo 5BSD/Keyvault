@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Keyvault - FreeBSD kernel module for secure key storage
  *
@@ -578,7 +578,7 @@ kv_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		break;
 
 	/*
-	 * Phase 3: Key exchange and derivation
+	 * Key exchange and derivation
 	 */
 	case KV_IOC_KEYEXCHANGE:
 		{

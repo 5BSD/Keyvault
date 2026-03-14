@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Compatibility layer for libsodium Ed25519 in FreeBSD kernel
  *
@@ -15,6 +15,7 @@
 
 #include <sys/types.h>
 #include <sys/systm.h>		/* explicit_bzero */
+#include <sys/libkern.h>	/* timingsafe_bcmp */
 #include <crypto/sha2/sha512.h>
 
 /*
@@ -69,31 +70,17 @@ crypto_hash_sha512(unsigned char *out, const unsigned char *in,
 }
 
 /*
- * Constant-time memory comparison (from libsodium)
- */
-static inline int
-sodium_memcmp(const void *b1_, const void *b2_, size_t len)
-{
-	const volatile unsigned char *b1 =
-	    (const volatile unsigned char *)b1_;
-	const volatile unsigned char *b2 =
-	    (const volatile unsigned char *)b2_;
-	size_t i;
-	volatile unsigned char d = 0U;
-
-	for (i = 0U; i < len; i++) {
-		d |= b1[i] ^ b2[i];
-	}
-	return (1 & ((d - 1) >> 8)) - 1;
-}
-
-/*
  * Constant-time 32-byte comparison
+ *
+ * Uses FreeBSD's timingsafe_bcmp() which is properly implemented
+ * to resist timing side-channel attacks.
+ *
+ * Returns 0 if equal, non-zero if different.
  */
 static inline int
 crypto_verify_32(const unsigned char *x, const unsigned char *y)
 {
-	return sodium_memcmp(x, y, 32);
+	return timingsafe_bcmp(x, y, 32);
 }
 
 #endif /* _KERNEL */

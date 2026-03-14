@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Keyvault - Key lifecycle management
  *
@@ -77,6 +77,60 @@ kv_alg_lookup(uint32_t algorithm)
 			return (ai);
 	}
 	return (NULL);
+}
+
+/*
+ * Check if a key ID already exists in the file context
+ *
+ * Caller must hold kf_mtx.
+ */
+static int
+kv_key_id_exists(struct kv_file *kf, uint64_t key_id)
+{
+	struct kv_key *kk;
+
+	KV_FILE_LOCK_ASSERT(kf);
+
+	LIST_FOREACH(kk, &kf->kf_keys, kk_link) {
+		if (kk->kk_id == key_id)
+			return (1);
+	}
+	return (0);
+}
+
+/*
+ * Generate a unique key ID
+ *
+ * Caller must hold kf_mtx.
+ * With 64-bit random IDs collision probability is negligible,
+ * but we check anyway for correctness.
+ *
+ * Returns 0 on failure (caller should treat as error).
+ */
+static uint64_t
+kv_key_gen_id(struct kv_file *kf)
+{
+	uint64_t id;
+	int attempts = 0;
+
+	KV_FILE_LOCK_ASSERT(kf);
+
+	do {
+		id = ((uint64_t)arc4random() << 32) | arc4random();
+		attempts++;
+		/*
+		 * Safety valve: with 64-bit random IDs and max 65536 keys,
+		 * collision is astronomically unlikely. If we somehow
+		 * fail after 1000 attempts, return 0 to signal failure.
+		 * The caller must check for this and return an error.
+		 */
+		if (attempts > 1000) {
+			printf("keyvault: key ID generation failed after 1000 attempts\n");
+			return (0);
+		}
+	} while (id == 0 || kv_key_id_exists(kf, id));
+
+	return (id);
 }
 
 /*
@@ -429,13 +483,15 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 		return (ENOSPC);
 	}
 
-	/*
-	 * Generate random key ID to prevent predictability.
-	 * With 64-bit random IDs, collision probability is negligible.
-	 */
-	do {
-		kk->kk_id = ((uint64_t)arc4random() << 32) | arc4random();
-	} while (kk->kk_id == 0);  /* Ensure non-zero ID */
+	/* Generate unique key ID (collision-checked) */
+	kk->kk_id = kv_key_gen_id(kf);
+	if (kk->kk_id == 0) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (EAGAIN);
+	}
 
 	/* Insert into key list */
 	LIST_INSERT_HEAD(&kf->kf_keys, kk, kk_link);
@@ -535,6 +591,43 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 
 		explicit_bzero(pk, sizeof(pk));
 		explicit_bzero(sk, sizeof(sk));
+	} else if (req->algorithm == KV_ALG_X25519) {
+		/* Handle X25519: import secret key, compute public key */
+		unsigned char pk[KV_X25519_POINT_SIZE];
+
+		if (keylen != KV_X25519_SCALAR_SIZE) {
+			explicit_bzero(keybuf, keylen);
+			free(keybuf, M_KEYVAULT);
+			mtx_destroy(&kk->kk_mtx);
+			free(kk, M_KEYVAULT);
+			return (EINVAL);
+		}
+
+		/* Compute public key from secret key */
+		if (kv_x25519_scalarmult_base(pk, keybuf) != 0) {
+			explicit_bzero(keybuf, keylen);
+			free(keybuf, M_KEYVAULT);
+			mtx_destroy(&kk->kk_mtx);
+			free(kk, M_KEYVAULT);
+			return (EIO);
+		}
+
+		/* Allocate and copy secret key */
+		kk->kk_material = malloc(KV_X25519_SCALAR_SIZE, M_KEYVAULT,
+		    M_WAITOK | M_ZERO);
+		memcpy(kk->kk_material, keybuf, KV_X25519_SCALAR_SIZE);
+		kk->kk_matlen = KV_X25519_SCALAR_SIZE;
+		kk->kk_keybits = 256;
+
+		/* Allocate and copy public key */
+		kk->kk_pubkey = malloc(KV_X25519_POINT_SIZE, M_KEYVAULT,
+		    M_WAITOK | M_ZERO);
+		memcpy(kk->kk_pubkey, pk, KV_X25519_POINT_SIZE);
+		kk->kk_publen = KV_X25519_POINT_SIZE;
+
+		kk->kk_type = KV_KEY_TYPE_ASYMMETRIC;
+
+		explicit_bzero(pk, sizeof(pk));
 	} else {
 		/* Symmetric key: use raw material directly */
 		kk->kk_material = malloc(keylen, M_KEYVAULT, M_WAITOK);
@@ -572,10 +665,15 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 		return (ENOSPC);
 	}
 
-	/* Generate random key ID */
-	do {
-		kk->kk_id = ((uint64_t)arc4random() << 32) | arc4random();
-	} while (kk->kk_id == 0);
+	/* Generate unique key ID (collision-checked) */
+	kk->kk_id = kv_key_gen_id(kf);
+	if (kk->kk_id == 0) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (EAGAIN);
+	}
 
 	/* Insert into key list */
 	LIST_INSERT_HEAD(&kf->kf_keys, kk, kk_link);
@@ -587,6 +685,97 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 	    kk->kk_id, req->algorithm, kk->kk_keybits);
 
 	req->key_id = kk->kk_id;
+	return (0);
+}
+
+/*
+ * Create a symmetric key from provided material
+ *
+ * Used internally by HKDF derivation to atomically create a key
+ * with specific material, avoiding race conditions from the
+ * generate-then-overwrite pattern.
+ */
+int
+kv_key_create_from_material(struct kv_file *kf, uint32_t algorithm,
+    const uint8_t *material, size_t matlen, uint64_t *key_id_out)
+{
+	const struct kv_alg_info *ai;
+	struct kv_key *kk;
+	struct timeval tv;
+
+	/* Validate algorithm */
+	ai = kv_alg_lookup(algorithm);
+	if (ai == NULL)
+		return (EINVAL);
+
+	/* Only symmetric algorithms supported */
+	if (algorithm == KV_ALG_ED25519 || algorithm == KV_ALG_X25519)
+		return (EINVAL);
+
+	/* Validate material */
+	if (material == NULL || matlen == 0 || matlen > KV_MAX_KEY_SIZE)
+		return (EINVAL);
+
+	/* Allocate key structure */
+	kk = malloc(sizeof(*kk), M_KEYVAULT, M_WAITOK | M_ZERO);
+
+	mtx_init(&kk->kk_mtx, "kv_key", NULL, MTX_DEF);
+	refcount_init(&kk->kk_refcnt, 1);
+	kk->kk_algorithm = algorithm;
+	kk->kk_state = KV_KEY_STATE_ACTIVE;
+	kk->kk_file = kf;
+	kk->kk_type = KV_KEY_TYPE_SYMMETRIC;
+
+	/* Copy provided material */
+	kk->kk_material = malloc(matlen, M_KEYVAULT, M_WAITOK);
+	memcpy(kk->kk_material, material, matlen);
+	kk->kk_matlen = matlen;
+	kk->kk_keybits = matlen * 8;
+	kk->kk_pubkey = NULL;
+	kk->kk_publen = 0;
+
+	/* Set timestamps */
+	getmicrotime(&tv);
+	kk->kk_created = tv.tv_sec;
+	kk->kk_expires = 0;
+
+	/* Atomically check limits and insert */
+	KV_FILE_LOCK(kf);
+	if (kf->kf_nkeys >= kv_max_keys_per_file) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (EMFILE);
+	}
+	if (kf->kf_keybytes + matlen > kv_max_key_bytes) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (ENOSPC);
+	}
+
+	/* Generate unique key ID (collision-checked) */
+	kk->kk_id = kv_key_gen_id(kf);
+	if (kk->kk_id == 0) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (EAGAIN);
+	}
+
+	/* Insert into key list */
+	LIST_INSERT_HEAD(&kf->kf_keys, kk, kk_link);
+	kf->kf_nkeys++;
+	kf->kf_keybytes += kk->kk_matlen;
+	KV_FILE_UNLOCK(kf);
+
+	SDT_PROBE3(keyvault, key, lifecycle, create,
+	    kk->kk_id, algorithm, kk->kk_keybits);
+
+	*key_id_out = kk->kk_id;
 	return (0);
 }
 

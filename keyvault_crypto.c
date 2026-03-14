@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2024 Keyvault Authors
+ * Copyright (c) 2024-2025 Keyvault Authors
  *
  * Keyvault - Cryptographic operations
  *
@@ -243,8 +243,8 @@ kv_crypto_encrypt(struct kv_file *kf, struct kv_encrypt_req *req)
 		return (EOPNOTSUPP);
 	}
 
-	/* AES-CBC requires 16-byte aligned input (no padding in kernel) */
-	if (req->plaintext_len % 16 != 0) {
+	/* AES-CBC requires block-aligned input (no padding in kernel) */
+	if (req->plaintext_len % KV_AES_BLOCK_SIZE != 0) {
 		kv_key_release(kk);
 		return (EINVAL);
 	}
@@ -259,7 +259,7 @@ kv_crypto_encrypt(struct kv_file *kf, struct kv_encrypt_req *req)
 	}
 
 	/* Allocate buffers */
-	ivlen = 16; /* AES block size */
+	ivlen = KV_AES_IV_SIZE;
 	inbuf = malloc(req->plaintext_len, M_KEYVAULT, M_WAITOK);
 	outbuf = malloc(req->plaintext_len, M_KEYVAULT, M_WAITOK);
 	iv = malloc(ivlen, M_KEYVAULT, M_WAITOK);
@@ -363,8 +363,8 @@ kv_crypto_decrypt(struct kv_file *kf, struct kv_decrypt_req *req)
 		return (EOPNOTSUPP);
 	}
 
-	/* AES-CBC requires 16-byte aligned input (no padding in kernel) */
-	if (req->ciphertext_len % 16 != 0) {
+	/* AES-CBC requires block-aligned input (no padding in kernel) */
+	if (req->ciphertext_len % KV_AES_BLOCK_SIZE != 0) {
 		kv_key_release(kk);
 		return (EINVAL);
 	}
@@ -379,7 +379,7 @@ kv_crypto_decrypt(struct kv_file *kf, struct kv_decrypt_req *req)
 	}
 
 	/* Allocate buffers */
-	ivlen = 16;
+	ivlen = KV_AES_IV_SIZE;
 	inbuf = malloc(req->ciphertext_len, M_KEYVAULT, M_WAITOK);
 	outbuf = malloc(req->ciphertext_len, M_KEYVAULT, M_WAITOK);
 	iv = malloc(ivlen, M_KEYVAULT, M_WAITOK);
@@ -489,8 +489,8 @@ kv_crypto_aead_encrypt(struct kv_file *kf, struct kv_aead_encrypt_req *req)
 	}
 
 	/* AEAD parameters (same for AES-GCM and ChaCha20-Poly1305) */
-	nonce_len = 12;  /* 96-bit nonce */
-	tag_len = 16;    /* Standard GCM tag size */
+	nonce_len = KV_AEAD_NONCE_SIZE;
+	tag_len = KV_AEAD_TAG_SIZE;
 
 	/* Allocate buffers */
 	total_len = req->aad_len + req->plaintext_len + tag_len;
@@ -655,8 +655,8 @@ kv_crypto_aead_decrypt(struct kv_file *kf, struct kv_aead_decrypt_req *req)
 	}
 
 	/* AEAD parameters (same for AES-GCM and ChaCha20-Poly1305) */
-	nonce_len = 12;
-	tag_len = 16;
+	nonce_len = KV_AEAD_NONCE_SIZE;
+	tag_len = KV_AEAD_TAG_SIZE;
 
 	if (req->nonce_len != nonce_len || req->tag_len != tag_len) {
 		kv_key_release(kk);
@@ -859,8 +859,12 @@ kv_crypto_verify(struct kv_file *kf, struct kv_verify_req *req)
 		return (ENOENT);
 	}
 
-	/* Must be an Ed25519 key */
+	/* Must be an Ed25519 key with valid public key */
 	if (kk->kk_algorithm != KV_ALG_ED25519) {
+		kv_key_release(kk);
+		return (EINVAL);
+	}
+	if (kk->kk_pubkey == NULL || kk->kk_publen != KV_ED25519_PUBLIC_SIZE) {
 		kv_key_release(kk);
 		return (EINVAL);
 	}
@@ -1111,7 +1115,7 @@ out:
 }
 
 /*
- * Get public key from asymmetric key
+ * Get public key from asymmetric key (Ed25519, X25519)
  */
 int
 kv_crypto_get_pubkey(struct kv_file *kf, struct kv_getpubkey_req *req)
@@ -1119,8 +1123,8 @@ kv_crypto_get_pubkey(struct kv_file *kf, struct kv_getpubkey_req *req)
 	struct kv_key *kk;
 	int error;
 
-	/* Validate parameters */
-	if (req->pubkey == NULL || req->pubkey_len < KV_ED25519_PUBLIC_SIZE)
+	/* Basic parameter validation */
+	if (req->pubkey == NULL)
 		return (EINVAL);
 
 	/* Acquire key */
@@ -1130,10 +1134,23 @@ kv_crypto_get_pubkey(struct kv_file *kf, struct kv_getpubkey_req *req)
 		return (ENOENT);
 	}
 
-	/* Must be an asymmetric key */
+	/* Must be an asymmetric key (Ed25519 or X25519) */
 	if (kk->kk_type != KV_KEY_TYPE_ASYMMETRIC || kk->kk_pubkey == NULL) {
 		kv_key_release(kk);
 		return (EINVAL);
+	}
+
+	/* Verify algorithm is Ed25519 or X25519 */
+	if (kk->kk_algorithm != KV_ALG_ED25519 &&
+	    kk->kk_algorithm != KV_ALG_X25519) {
+		kv_key_release(kk);
+		return (EINVAL);
+	}
+
+	/* Check buffer size against actual public key length */
+	if (req->pubkey_len < kk->kk_publen) {
+		kv_key_release(kk);
+		return (ENOSPC);
 	}
 
 	/* Check key state */
@@ -1249,16 +1266,39 @@ kv_crypto_derive(struct kv_file *kf, struct kv_derive_req *req)
 	unsigned char *info = NULL;
 	unsigned char *okm = NULL;
 	size_t okm_len;
+	uint32_t output_alg;
 	int hash_alg;
 	int error;
 
-	/* Validate algorithm */
+	/* Validate HKDF algorithm */
 	switch (req->algorithm) {
 	case KV_ALG_HKDF_SHA256:
 		hash_alg = KV_HKDF_HASH_SHA256;
 		break;
 	case KV_ALG_HKDF_SHA512:
 		hash_alg = KV_HKDF_HASH_SHA512;
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	/*
+	 * Validate output algorithm.
+	 * Only symmetric algorithms are allowed for derived keys.
+	 * Default to HMAC-SHA256 if not specified (0).
+	 */
+	output_alg = req->output_algorithm;
+	if (output_alg == 0)
+		output_alg = KV_ALG_HMAC_SHA256;
+
+	switch (output_alg) {
+	case KV_ALG_AES128_GCM:
+	case KV_ALG_AES256_GCM:
+	case KV_ALG_AES128_CBC:
+	case KV_ALG_AES256_CBC:
+	case KV_ALG_CHACHA20_POLY1305:
+	case KV_ALG_HMAC_SHA256:
+	case KV_ALG_HMAC_SHA512:
 		break;
 	default:
 		return (EINVAL);
@@ -1317,41 +1357,12 @@ kv_crypto_derive(struct kv_file *kf, struct kv_derive_req *req)
 		goto out;
 
 	/*
-	 * Create a new symmetric key with the derived material.
-	 * We generate it as an HMAC key since HKDF output is typically
-	 * used for symmetric operations.
+	 * Create a new symmetric key directly from the derived material.
+	 * This avoids the race condition of generate-then-overwrite.
+	 * Use the caller-specified algorithm, or HMAC-SHA256 if not specified.
 	 */
-	error = kv_key_generate(kf, KV_ALG_HMAC_SHA256,
-	    req->output_bits, 0, &req->derived_key_id);
-	if (error != 0)
-		goto out;
-
-	/*
-	 * Replace the random key material with our derived key.
-	 * We need to find the key and update its material.
-	 */
-	{
-		struct kv_key *dk;
-
-		KV_FILE_LOCK(kf);
-		LIST_FOREACH(dk, &kf->kf_keys, kk_link) {
-			if (dk->kk_id == req->derived_key_id)
-				break;
-		}
-		if (dk != NULL) {
-			KV_KEY_LOCK(dk);
-			/* Replace key material with derived key */
-			explicit_bzero(dk->kk_material, dk->kk_matlen);
-			memcpy(dk->kk_material, okm, okm_len);
-			KV_KEY_UNLOCK(dk);
-		}
-		KV_FILE_UNLOCK(kf);
-
-		if (dk == NULL) {
-			error = ENOENT;  /* Should not happen */
-			goto out;
-		}
-	}
+	error = kv_key_create_from_material(kf, output_alg,
+	    okm, okm_len, &req->derived_key_id);
 
 out:
 	SDT_PROBE3(keyvault, crypto, op, derive,
