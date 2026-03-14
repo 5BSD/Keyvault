@@ -531,12 +531,8 @@ kv_crypto_aead_encrypt(struct kv_file *kf, struct kv_aead_encrypt_req *req)
 			goto out;
 	}
 
-	/* Handle nonce */
-	if (req->nonce != NULL && req->nonce_len > 0) {
-		if (req->nonce_len != nonce_len) {
-			error = EINVAL;
-			goto out;
-		}
+	/* Handle nonce: user-provided (fixed size) or kernel-generated */
+	if (req->nonce != NULL) {
 		error = copyin(req->nonce, nonce, nonce_len);
 		if (error != 0)
 			goto out;
@@ -583,16 +579,11 @@ kv_crypto_aead_encrypt(struct kv_file *kf, struct kv_aead_encrypt_req *req)
 		goto out;
 	req->ciphertext_len = req->plaintext_len;
 
-	/* Copy tag to userspace */
-	if (req->tag_len < tag_len) {
-		error = ENOSPC;
-		goto out;
-	}
+	/* Copy tag to userspace (always KV_AEAD_TAG_SIZE bytes) */
 	memcpy(tag, outbuf + req->aad_len + req->plaintext_len, tag_len);
 	error = copyout(tag, req->tag, tag_len);
 	if (error != 0)
 		goto out;
-	req->tag_len = tag_len;
 
 	/* Copy nonce out if requested */
 	if (req->nonce_out != NULL) {
@@ -678,11 +669,6 @@ kv_crypto_aead_decrypt(struct kv_file *kf, struct kv_aead_decrypt_req *req)
 	/* AEAD parameters (same for AES-GCM and ChaCha20-Poly1305) */
 	nonce_len = KV_AEAD_NONCE_SIZE;
 	tag_len = KV_AEAD_TAG_SIZE;
-
-	if (req->nonce_len != nonce_len || req->tag_len != tag_len) {
-		kv_key_release(kk);
-		return (EINVAL);
-	}
 
 	/* Allocate buffers */
 	total_len = req->aad_len + req->ciphertext_len + tag_len;

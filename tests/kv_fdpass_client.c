@@ -115,10 +115,8 @@ test_encrypt(int fd, uint64_t key_id)
 	req.ciphertext = ciphertext;
 	req.ciphertext_len = sizeof(ciphertext);
 	req.nonce = NULL;
-	req.nonce_len = 0;
 	req.nonce_out = nonce;
 	req.tag = tag;
-	req.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &req) < 0) {
 		TEST_FAIL(strerror(errno));
@@ -154,7 +152,6 @@ test_encrypt_decrypt_roundtrip(int fd, uint64_t key_id)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt failed");
@@ -168,9 +165,7 @@ test_encrypt_decrypt_roundtrip(int fd, uint64_t key_id)
 	decreq.ciphertext = ciphertext;
 	decreq.ciphertext_len = encreq.ciphertext_len;
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 

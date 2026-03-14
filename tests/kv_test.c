@@ -224,10 +224,8 @@ test_aead_roundtrip(void)
 	encreq.ciphertext = ciphertext;
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce = NULL;  /* Let kernel generate */
-	encreq.nonce_len = 0;
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt");
@@ -251,9 +249,7 @@ test_aead_roundtrip(void)
 	decreq.aad = aad;
 	decreq.aad_len = strlen(aad);
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 
@@ -603,10 +599,8 @@ test_fd_passing(void)
 		encreq.ciphertext = ciphertext;
 		encreq.ciphertext_len = sizeof(ciphertext);
 		encreq.nonce = NULL;
-		encreq.nonce_len = 0;
 		encreq.nonce_out = nonce;
 		encreq.tag = tag;
-		encreq.tag_len = sizeof(tag);
 
 		if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 			fprintf(stderr, "Child: encrypt failed (should succeed)\n");
@@ -1012,7 +1006,6 @@ test_aead_auth_failure(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt");
@@ -1029,9 +1022,7 @@ test_aead_auth_failure(void)
 	decreq.ciphertext = ciphertext;
 	decreq.ciphertext_len = encreq.ciphertext_len;
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 
@@ -1144,7 +1135,6 @@ test_wrong_algorithm(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
 		TEST_FAIL("AEAD encrypt should fail with HMAC key");
@@ -1206,7 +1196,6 @@ test_key_expiration(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt before expiry");
@@ -1226,7 +1215,6 @@ test_key_expiration(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
 		TEST_FAIL("encrypt should fail after expiry");
@@ -1441,7 +1429,6 @@ test_key_revoke(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
 		TEST_FAIL("encrypt on revoked key should fail");
@@ -1772,7 +1759,6 @@ test_buffer_too_small(void)
 	encreq.ciphertext_len = sizeof(tiny_buf);  /* Too small */
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
 		TEST_FAIL("tiny ciphertext buffer should fail");
@@ -2000,12 +1986,10 @@ test_invalid_iv_length(void)
 	int fd;
 	struct kv_genkey_req genreq;
 	struct kv_encrypt_req encreq;
-	struct kv_aead_decrypt_req decreq;
 	char ciphertext[64];
 	char iv[32];
-	char tag[16];
 
-	TEST_START("invalid IV/nonce length rejected");
+	TEST_START("invalid IV length rejected");
 
 	fd = open(DEVICE_PATH, O_RDWR);
 	if (fd < 0) {
@@ -2023,17 +2007,6 @@ test_invalid_iv_length(void)
 		return (1);
 	}
 	uint64_t cbc_key = genreq.key_id;
-
-	/* Generate GCM key */
-	memset(&genreq, 0, sizeof(genreq));
-	genreq.algorithm = KV_ALG_AES256_GCM;
-
-	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
-		TEST_FAIL("genkey GCM");
-		close(fd);
-		return (1);
-	}
-	uint64_t gcm_key = genreq.key_id;
 
 	/* CBC encrypt with wrong IV length (should be 16) */
 	memset(&encreq, 0, sizeof(encreq));
@@ -2058,29 +2031,10 @@ test_invalid_iv_length(void)
 		return (1);
 	}
 
-	/* GCM decrypt with wrong nonce length (should be 12) */
-	memset(&decreq, 0, sizeof(decreq));
-	decreq.key_id = gcm_key;
-	decreq.ciphertext = ciphertext;
-	decreq.ciphertext_len = 16;
-	decreq.nonce = iv;
-	decreq.nonce_len = 8;  /* Wrong - should be 12 */
-	decreq.tag = tag;
-	decreq.tag_len = 16;
-	decreq.plaintext = ciphertext;
-	decreq.plaintext_len = sizeof(ciphertext);
-
-	if (ioctl(fd, KV_IOC_AEAD_DECRYPT, &decreq) == 0) {
-		TEST_FAIL("GCM with 8-byte nonce should fail");
-		close(fd);
-		return (1);
-	}
-
-	if (errno != EINVAL) {
-		TEST_FAIL("expected EINVAL for wrong nonce length");
-		close(fd);
-		return (1);
-	}
+	/*
+	 * Note: Nonce length validation was removed from the API.
+	 * The kernel now uses a fixed KV_AEAD_NONCE_SIZE (12 bytes).
+	 */
 
 	close(fd);
 	TEST_PASS();
@@ -2189,7 +2143,6 @@ test_expired_key_flag(void)
 	encreq.ciphertext_len = sizeof(buf);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 	ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq);  /* Expected to fail */
 
 	/* Now check info shows expired */
@@ -2262,7 +2215,6 @@ test_use_after_destroy(void)
 	encreq.ciphertext_len = sizeof(buf);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
 		TEST_FAIL("encrypt on destroyed key should fail");
@@ -3027,7 +2979,6 @@ test_sysctl_max_data_enforced(void)
 	encreq.ciphertext_len = test_max + 1 + 16;
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
 		free(plaintext);
@@ -3107,10 +3058,8 @@ test_aes128_gcm_roundtrip(void)
 	encreq.ciphertext = ciphertext;
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce = NULL;
-	encreq.nonce_len = 0;
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt");
@@ -3127,9 +3076,7 @@ test_aes128_gcm_roundtrip(void)
 	decreq.aad = aad;
 	decreq.aad_len = strlen(aad);
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 
@@ -3565,10 +3512,8 @@ test_chacha20_poly1305_roundtrip(void)
 	encreq.ciphertext = ciphertext;
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce = NULL;
-	encreq.nonce_len = 0;
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt");
@@ -3592,9 +3537,7 @@ test_chacha20_poly1305_roundtrip(void)
 	decreq.aad = aad;
 	decreq.aad_len = strlen(aad);
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 
@@ -3660,7 +3603,6 @@ test_chacha20_poly1305_auth_failure(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt");
@@ -3677,9 +3619,7 @@ test_chacha20_poly1305_auth_failure(void)
 	decreq.ciphertext = ciphertext;
 	decreq.ciphertext_len = encreq.ciphertext_len;
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 
@@ -4771,7 +4711,6 @@ test_import_symmetric(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt");
@@ -4786,9 +4725,7 @@ test_import_symmetric(void)
 	decreq.ciphertext = ciphertext;
 	decreq.ciphertext_len = encreq.ciphertext_len;
 	decreq.nonce = nonce;
-	decreq.nonce_len = 12;
 	decreq.tag = tag;
-	decreq.tag_len = 16;
 	decreq.plaintext = decrypted;
 	decreq.plaintext_len = sizeof(decrypted);
 
@@ -4887,7 +4824,6 @@ test_hkdf_output_algorithm_aes(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt with derived key");
@@ -4976,7 +4912,6 @@ test_hkdf_output_algorithm_chacha(void)
 	encreq.ciphertext_len = sizeof(ciphertext);
 	encreq.nonce_out = nonce;
 	encreq.tag = tag;
-	encreq.tag_len = sizeof(tag);
 
 	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
 		TEST_FAIL("encrypt with derived key");
@@ -5183,7 +5118,6 @@ test_concurrent_operations(void)
 				encreq.ciphertext_len = sizeof(ciphertext);
 				encreq.nonce_out = nonce;
 				encreq.tag = tag;
-				encreq.tag_len = sizeof(tag);
 
 				if (ioctl(fds[i], KV_IOC_AEAD_ENCRYPT, &encreq) < 0)
 					_exit(1);
@@ -5193,9 +5127,7 @@ test_concurrent_operations(void)
 				decreq.ciphertext = ciphertext;
 				decreq.ciphertext_len = encreq.ciphertext_len;
 				decreq.nonce = nonce;
-				decreq.nonce_len = 12;
 				decreq.tag = tag;
-				decreq.tag_len = 16;
 				decreq.plaintext = decrypted;
 				decreq.plaintext_len = sizeof(decrypted);
 
@@ -5269,6 +5201,1191 @@ test_rapid_key_lifecycle(void)
 			close(fd);
 			return (1);
 		}
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/* ============================================================
+ * Comprehensive Capability Restriction Tests
+ * ============================================================
+ * Tests that each capability properly restricts the corresponding
+ * operations when removed.
+ */
+
+/*
+ * Test: KV_CAP_GENKEY restriction
+ */
+static int
+test_cap_genkey_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_restrict_req restrictreq;
+
+	TEST_START("KV_CAP_GENKEY restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate a key first (while we still can) */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("initial genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove GENKEY capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_GENKEY;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to generate another key - should fail */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) == 0) {
+		TEST_FAIL("genkey should fail without KV_CAP_GENKEY");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_DESTROY restriction
+ */
+static int
+test_cap_destroy_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_destroy_req destroyreq;
+	struct kv_restrict_req restrictreq;
+
+	TEST_START("KV_CAP_DESTROY restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate a key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove DESTROY capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_DESTROY;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to destroy - should fail */
+	memset(&destroyreq, 0, sizeof(destroyreq));
+	destroyreq.key_id = genreq.key_id;
+	if (ioctl(fd, KV_IOC_DESTROY, &destroyreq) == 0) {
+		TEST_FAIL("destroy should fail without KV_CAP_DESTROY");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_ENCRYPT restriction (AEAD)
+ */
+static int
+test_cap_encrypt_restriction_aead(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_aead_encrypt_req encreq;
+	struct kv_restrict_req restrictreq;
+	const char *plaintext = "test data";
+	char ciphertext[64];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("KV_CAP_ENCRYPT restriction (AEAD)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate AES-GCM key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove ENCRYPT capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_ENCRYPT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to encrypt - should fail */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = genreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
+		TEST_FAIL("AEAD encrypt should fail without KV_CAP_ENCRYPT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_ENCRYPT restriction (CBC)
+ */
+static int
+test_cap_encrypt_restriction_cbc(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_encrypt_req encreq;
+	struct kv_restrict_req restrictreq;
+	const char *plaintext = "1234567890123456";  /* 16 bytes for CBC */
+	char ciphertext[64];
+	char iv[16];
+
+	TEST_START("KV_CAP_ENCRYPT restriction (CBC)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate AES-CBC key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_CBC;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove ENCRYPT capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_ENCRYPT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to encrypt - should fail */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = genreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = 16;
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.iv_out = iv;
+
+	if (ioctl(fd, KV_IOC_ENCRYPT, &encreq) == 0) {
+		TEST_FAIL("CBC encrypt should fail without KV_CAP_ENCRYPT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_DECRYPT restriction (AEAD)
+ */
+static int
+test_cap_decrypt_restriction_aead(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_aead_encrypt_req encreq;
+	struct kv_aead_decrypt_req decreq;
+	struct kv_restrict_req restrictreq;
+	const char *plaintext = "test data";
+	char ciphertext[64];
+	char decrypted[64];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("KV_CAP_DECRYPT restriction (AEAD)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate AES-GCM key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Encrypt some data first */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = genreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) < 0) {
+		TEST_FAIL("encrypt");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove DECRYPT capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_DECRYPT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to decrypt - should fail */
+	memset(&decreq, 0, sizeof(decreq));
+	decreq.key_id = genreq.key_id;
+	decreq.ciphertext = ciphertext;
+	decreq.ciphertext_len = encreq.ciphertext_len;
+	decreq.nonce = nonce;
+	decreq.tag = tag;
+	decreq.plaintext = decrypted;
+	decreq.plaintext_len = sizeof(decrypted);
+
+	if (ioctl(fd, KV_IOC_AEAD_DECRYPT, &decreq) == 0) {
+		TEST_FAIL("AEAD decrypt should fail without KV_CAP_DECRYPT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_DECRYPT restriction (CBC)
+ */
+static int
+test_cap_decrypt_restriction_cbc(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_encrypt_req encreq;
+	struct kv_decrypt_req decreq;
+	struct kv_restrict_req restrictreq;
+	const char *plaintext = "1234567890123456";
+	char ciphertext[64];
+	char decrypted[64];
+	char iv[16];
+
+	TEST_START("KV_CAP_DECRYPT restriction (CBC)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate AES-CBC key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_CBC;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Encrypt first */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = genreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = 16;
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.iv_out = iv;
+	if (ioctl(fd, KV_IOC_ENCRYPT, &encreq) < 0) {
+		TEST_FAIL("encrypt");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove DECRYPT capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_DECRYPT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to decrypt - should fail */
+	memset(&decreq, 0, sizeof(decreq));
+	decreq.key_id = genreq.key_id;
+	decreq.ciphertext = ciphertext;
+	decreq.ciphertext_len = encreq.ciphertext_len;
+	decreq.iv = iv;
+	decreq.iv_len = 16;
+	decreq.plaintext = decrypted;
+	decreq.plaintext_len = sizeof(decrypted);
+
+	if (ioctl(fd, KV_IOC_DECRYPT, &decreq) == 0) {
+		TEST_FAIL("CBC decrypt should fail without KV_CAP_DECRYPT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_SIGN restriction (Ed25519)
+ */
+static int
+test_cap_sign_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_sign_req signreq;
+	struct kv_restrict_req restrictreq;
+	const char *message = "test message";
+	unsigned char signature[64];
+
+	TEST_START("KV_CAP_SIGN restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate Ed25519 key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_ED25519;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove SIGN capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_SIGN;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to sign - should fail */
+	memset(&signreq, 0, sizeof(signreq));
+	signreq.key_id = genreq.key_id;
+	signreq.data = message;
+	signreq.data_len = strlen(message);
+	signreq.signature = signature;
+	signreq.signature_len = sizeof(signature);
+
+	if (ioctl(fd, KV_IOC_SIGN, &signreq) == 0) {
+		TEST_FAIL("sign should fail without KV_CAP_SIGN");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_VERIFY restriction (Ed25519)
+ */
+static int
+test_cap_verify_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_sign_req signreq;
+	struct kv_verify_req verifyreq;
+	struct kv_restrict_req restrictreq;
+	const char *message = "test message";
+	unsigned char signature[64];
+
+	TEST_START("KV_CAP_VERIFY restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate Ed25519 key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_ED25519;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Sign a message first */
+	memset(&signreq, 0, sizeof(signreq));
+	signreq.key_id = genreq.key_id;
+	signreq.data = message;
+	signreq.data_len = strlen(message);
+	signreq.signature = signature;
+	signreq.signature_len = sizeof(signature);
+	if (ioctl(fd, KV_IOC_SIGN, &signreq) < 0) {
+		TEST_FAIL("sign");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove VERIFY capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_VERIFY;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to verify - should fail */
+	memset(&verifyreq, 0, sizeof(verifyreq));
+	verifyreq.key_id = genreq.key_id;
+	verifyreq.data = message;
+	verifyreq.data_len = strlen(message);
+	verifyreq.signature = signature;
+	verifyreq.signature_len = 64;
+
+	if (ioctl(fd, KV_IOC_VERIFY, &verifyreq) == 0) {
+		TEST_FAIL("verify should fail without KV_CAP_VERIFY");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_MAC restriction (HMAC)
+ */
+static int
+test_cap_mac_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_mac_req macreq;
+	struct kv_restrict_req restrictreq;
+	const char *data = "test data";
+	unsigned char mac[32];
+
+	TEST_START("KV_CAP_MAC restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate HMAC key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_HMAC_SHA256;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove MAC capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_MAC;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to compute MAC - should fail */
+	memset(&macreq, 0, sizeof(macreq));
+	macreq.key_id = genreq.key_id;
+	macreq.data = data;
+	macreq.data_len = strlen(data);
+	macreq.mac = mac;
+	macreq.mac_len = sizeof(mac);
+
+	if (ioctl(fd, KV_IOC_MAC, &macreq) == 0) {
+		TEST_FAIL("MAC should fail without KV_CAP_MAC");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_HASH restriction
+ */
+static int
+test_cap_hash_restriction(void)
+{
+	int fd;
+	struct kv_hash_req hashreq;
+	struct kv_restrict_req restrictreq;
+	const char *data = "test data";
+	unsigned char digest[32];
+
+	TEST_START("KV_CAP_HASH restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Remove HASH capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_HASH;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to compute hash - should fail */
+	memset(&hashreq, 0, sizeof(hashreq));
+	hashreq.algorithm = KV_ALG_SHA256;
+	hashreq.data = data;
+	hashreq.data_len = strlen(data);
+	hashreq.digest = digest;
+	hashreq.digest_len = sizeof(digest);
+
+	if (ioctl(fd, KV_IOC_HASH, &hashreq) == 0) {
+		TEST_FAIL("hash should fail without KV_CAP_HASH");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_GETINFO restriction
+ */
+static int
+test_cap_getinfo_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_keyinfo_req inforeq;
+	struct kv_restrict_req restrictreq;
+
+	TEST_START("KV_CAP_GETINFO restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate a key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove GETINFO capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_GETINFO;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to get key info - should fail */
+	memset(&inforeq, 0, sizeof(inforeq));
+	inforeq.key_id = genreq.key_id;
+
+	if (ioctl(fd, KV_IOC_GETINFO, &inforeq) == 0) {
+		TEST_FAIL("getinfo should fail without KV_CAP_GETINFO");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_LIST restriction
+ */
+static int
+test_cap_list_restriction(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_list_req listreq;
+	struct kv_restrict_req restrictreq;
+	uint64_t key_ids[16];
+
+	TEST_START("KV_CAP_LIST restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate a key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove LIST capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_LIST;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to list keys - should fail */
+	memset(&listreq, 0, sizeof(listreq));
+	listreq.key_ids = key_ids;
+	listreq.max_keys = 16;
+
+	if (ioctl(fd, KV_IOC_LIST, &listreq) == 0) {
+		TEST_FAIL("list should fail without KV_CAP_LIST");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_RESTRICT restriction (cannot further restrict)
+ */
+static int
+test_cap_restrict_restriction(void)
+{
+	int fd;
+	struct kv_restrict_req restrictreq;
+
+	TEST_START("KV_CAP_RESTRICT restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Remove RESTRICT capability (but keep others) */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_RESTRICT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("initial restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to restrict further - should fail */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_READONLY;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) == 0) {
+		TEST_FAIL("restrict should fail without KV_CAP_RESTRICT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_IMPORT restriction
+ */
+static int
+test_cap_import_restriction(void)
+{
+	int fd;
+	struct kv_import_req importreq;
+	struct kv_restrict_req restrictreq;
+	/* Known Ed25519 seed (32 bytes) */
+	unsigned char seed[32] = {
+		0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+		0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+		0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+		0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60
+	};
+
+	TEST_START("KV_CAP_IMPORT restriction");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Remove IMPORT capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_IMPORT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to import - should fail */
+	memset(&importreq, 0, sizeof(importreq));
+	importreq.algorithm = KV_ALG_ED25519;
+	importreq.key_material = seed;
+	importreq.key_len = sizeof(seed);
+
+	if (ioctl(fd, KV_IOC_IMPORT, &importreq) == 0) {
+		TEST_FAIL("import should fail without KV_CAP_IMPORT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_ENCRYPT restriction with ChaCha20-Poly1305
+ */
+static int
+test_cap_encrypt_restriction_chacha(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_aead_encrypt_req encreq;
+	struct kv_restrict_req restrictreq;
+	const char *plaintext = "test data";
+	char ciphertext[64];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("KV_CAP_ENCRYPT restriction (ChaCha20-Poly1305)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate ChaCha20-Poly1305 key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_CHACHA20_POLY1305;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove ENCRYPT capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_ENCRYPT;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to encrypt - should fail */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = genreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
+		TEST_FAIL("ChaCha20 encrypt should fail without KV_CAP_ENCRYPT");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: KV_CAP_MAC restriction with HMAC-SHA512
+ */
+static int
+test_cap_mac_restriction_sha512(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_mac_req macreq;
+	struct kv_restrict_req restrictreq;
+	const char *data = "test data";
+	unsigned char mac[64];
+
+	TEST_START("KV_CAP_MAC restriction (HMAC-SHA512)");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate HMAC-SHA512 key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_HMAC_SHA512;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove MAC capability */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_MAC;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to compute MAC - should fail */
+	memset(&macreq, 0, sizeof(macreq));
+	macreq.key_id = genreq.key_id;
+	macreq.data = data;
+	macreq.data_len = strlen(data);
+	macreq.mac = mac;
+	macreq.mac_len = sizeof(mac);
+
+	if (ioctl(fd, KV_IOC_MAC, &macreq) == 0) {
+		TEST_FAIL("HMAC-SHA512 should fail without KV_CAP_MAC");
+		close(fd);
+		return (1);
+	}
+
+	if (errno != EPERM) {
+		TEST_FAIL("expected EPERM");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Multiple capabilities can be removed at once
+ */
+static int
+test_cap_multiple_restrictions(void)
+{
+	int fd;
+	struct kv_genkey_req genreq;
+	struct kv_aead_encrypt_req encreq;
+	struct kv_destroy_req destroyreq;
+	struct kv_restrict_req restrictreq;
+	struct kv_getcaps_req getcaps;
+	const char *plaintext = "test";
+	char ciphertext[64];
+	char nonce[12];
+	char tag[16];
+
+	TEST_START("multiple capability restrictions");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Generate a key */
+	memset(&genreq, 0, sizeof(genreq));
+	genreq.algorithm = KV_ALG_AES256_GCM;
+	if (ioctl(fd, KV_IOC_GENKEY, &genreq) < 0) {
+		TEST_FAIL("genkey");
+		close(fd);
+		return (1);
+	}
+
+	/* Remove ENCRYPT, DECRYPT, and DESTROY */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~(KV_CAP_ENCRYPT | KV_CAP_DECRYPT | KV_CAP_DESTROY);
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Verify caps were removed */
+	memset(&getcaps, 0, sizeof(getcaps));
+	if (ioctl(fd, KV_IOC_GETCAPS, &getcaps) < 0) {
+		TEST_FAIL("getcaps");
+		close(fd);
+		return (1);
+	}
+
+	if (getcaps.caps & KV_CAP_ENCRYPT) {
+		TEST_FAIL("ENCRYPT cap should be removed");
+		close(fd);
+		return (1);
+	}
+	if (getcaps.caps & KV_CAP_DECRYPT) {
+		TEST_FAIL("DECRYPT cap should be removed");
+		close(fd);
+		return (1);
+	}
+	if (getcaps.caps & KV_CAP_DESTROY) {
+		TEST_FAIL("DESTROY cap should be removed");
+		close(fd);
+		return (1);
+	}
+
+	/* Encrypt should fail */
+	memset(&encreq, 0, sizeof(encreq));
+	encreq.key_id = genreq.key_id;
+	encreq.plaintext = plaintext;
+	encreq.plaintext_len = strlen(plaintext);
+	encreq.ciphertext = ciphertext;
+	encreq.ciphertext_len = sizeof(ciphertext);
+	encreq.nonce_out = nonce;
+	encreq.tag = tag;
+
+	if (ioctl(fd, KV_IOC_AEAD_ENCRYPT, &encreq) == 0) {
+		TEST_FAIL("encrypt should fail");
+		close(fd);
+		return (1);
+	}
+
+	/* Destroy should fail */
+	memset(&destroyreq, 0, sizeof(destroyreq));
+	destroyreq.key_id = genreq.key_id;
+	if (ioctl(fd, KV_IOC_DESTROY, &destroyreq) == 0) {
+		TEST_FAIL("destroy should fail");
+		close(fd);
+		return (1);
+	}
+
+	close(fd);
+	TEST_PASS();
+	return (0);
+}
+
+/*
+ * Test: Capabilities cannot be added back
+ */
+static int
+test_cap_cannot_add_back(void)
+{
+	int fd;
+	struct kv_restrict_req restrictreq;
+	struct kv_getcaps_req getcaps;
+
+	TEST_START("capabilities cannot be added back");
+
+	fd = open(DEVICE_PATH, O_RDWR);
+	if (fd < 0) {
+		TEST_FAIL("open");
+		return (1);
+	}
+
+	/* Remove GENKEY */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL & ~KV_CAP_GENKEY;
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		TEST_FAIL("restrict");
+		close(fd);
+		return (1);
+	}
+
+	/* Try to add GENKEY back */
+	memset(&restrictreq, 0, sizeof(restrictreq));
+	restrictreq.caps = KV_CAP_ALL;  /* Try to restore all caps */
+	if (ioctl(fd, KV_IOC_RESTRICT, &restrictreq) < 0) {
+		/* This might fail or succeed depending on implementation */
+	}
+
+	/* Verify GENKEY is still gone */
+	memset(&getcaps, 0, sizeof(getcaps));
+	if (ioctl(fd, KV_IOC_GETCAPS, &getcaps) < 0) {
+		TEST_FAIL("getcaps");
+		close(fd);
+		return (1);
+	}
+
+	if (getcaps.caps & KV_CAP_GENKEY) {
+		TEST_FAIL("GENKEY should not be restorable");
+		close(fd);
+		return (1);
 	}
 
 	close(fd);
@@ -5393,6 +6510,27 @@ main(int argc, char *argv[])
 	printf("\n--- Stress Tests ---\n");
 	test_rapid_key_lifecycle();
 	test_concurrent_operations();
+
+	/* Comprehensive Capability Restriction Tests */
+	printf("\n--- Comprehensive Capability Tests ---\n");
+	test_cap_genkey_restriction();
+	test_cap_destroy_restriction();
+	test_cap_encrypt_restriction_aead();
+	test_cap_encrypt_restriction_cbc();
+	test_cap_encrypt_restriction_chacha();
+	test_cap_decrypt_restriction_aead();
+	test_cap_decrypt_restriction_cbc();
+	test_cap_sign_restriction();
+	test_cap_verify_restriction();
+	test_cap_mac_restriction();
+	test_cap_mac_restriction_sha512();
+	test_cap_hash_restriction();
+	test_cap_getinfo_restriction();
+	test_cap_list_restriction();
+	test_cap_restrict_restriction();
+	test_cap_import_restriction();
+	test_cap_multiple_restrictions();
+	test_cap_cannot_add_back();
 
 	printf("\n===========================================\n");
 	printf("Results: %d/%d tests passed\n", tests_passed, tests_run);

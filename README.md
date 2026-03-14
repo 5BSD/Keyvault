@@ -60,17 +60,27 @@ ioctl(fd, KV_IOC_GENKEY, &gen);
 uint64_t key_id = gen.key_id;
 
 // Encrypt data
+const char *data = "Hello, World!";
+size_t data_len = strlen(data);
+
+// Buffers: ciphertext is same size as plaintext for GCM
+uint8_t ciphertext[128];          // Must be >= data_len
+uint8_t nonce[KV_AEAD_NONCE_SIZE]; // 12 bytes, filled by kernel
+uint8_t tag[KV_AEAD_TAG_SIZE];     // 16 bytes, auth tag output
+
 struct kv_aead_encrypt_req enc = {
     .key_id = key_id,
     .plaintext = data,
     .plaintext_len = data_len,
-    .ciphertext = output,
-    .ciphertext_len = sizeof(output),
-    .nonce_out = nonce,
-    .tag = tag,
-    .tag_len = 16
+    .ciphertext = ciphertext,
+    .ciphertext_len = sizeof(ciphertext),
+    .nonce = NULL,                 // NULL = kernel generates random nonce
+    .nonce_out = nonce,            // Kernel writes nonce here (12 bytes)
+    .tag = tag                     // Kernel writes tag here (16 bytes)
 };
 ioctl(fd, KV_IOC_AEAD_ENCRYPT, &enc);
+// enc.ciphertext_len now contains actual ciphertext length (== data_len)
+// nonce[] and tag[] are filled by kernel - save these for decryption!
 ```
 
 ## FD Passing with Capability Restriction

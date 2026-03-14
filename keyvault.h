@@ -171,7 +171,7 @@ struct kv_decrypt_req {
 	size_t          iv_len;         /* in: IV length */
 };
 
-/* AEAD encryption request (AES-GCM) */
+/* AEAD encryption request (AES-GCM, ChaCha20-Poly1305) */
 struct kv_aead_encrypt_req {
 	uint64_t        key_id;         /* in: key to use */
 	const void     *plaintext;      /* in: data to encrypt */
@@ -180,11 +180,9 @@ struct kv_aead_encrypt_req {
 	size_t          aad_len;        /* in: AAD length */
 	void           *ciphertext;     /* out: encrypted data */
 	size_t          ciphertext_len; /* in/out: buffer size / actual size */
-	const void     *nonce;          /* in: nonce (NULL for random) */
-	size_t          nonce_len;      /* in: nonce length */
-	void           *nonce_out;      /* out: nonce used (if input was NULL) */
-	void           *tag;            /* out: authentication tag */
-	size_t          tag_len;        /* in/out: tag buffer size / actual */
+	const void     *nonce;          /* in: nonce (NULL = kernel generates) */
+	void           *nonce_out;      /* out: nonce used (KV_AEAD_NONCE_SIZE) */
+	void           *tag;            /* out: authentication tag (KV_AEAD_TAG_SIZE) */
 };
 
 /* AEAD decryption request */
@@ -194,10 +192,8 @@ struct kv_aead_decrypt_req {
 	size_t          ciphertext_len; /* in: ciphertext length */
 	const void     *aad;            /* in: additional authenticated data */
 	size_t          aad_len;        /* in: AAD length */
-	const void     *nonce;          /* in: nonce used for encryption */
-	size_t          nonce_len;      /* in: nonce length */
-	const void     *tag;            /* in: authentication tag */
-	size_t          tag_len;        /* in: tag length */
+	const void     *nonce;          /* in: nonce (KV_AEAD_NONCE_SIZE bytes) */
+	const void     *tag;            /* in: authentication tag (KV_AEAD_TAG_SIZE) */
 	void           *plaintext;      /* out: decrypted data */
 	size_t          plaintext_len;  /* in/out: buffer size / actual size */
 };
