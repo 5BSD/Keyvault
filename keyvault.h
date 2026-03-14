@@ -19,13 +19,12 @@
  *
  * Numbering scheme:
  *   0       = None/invalid
- *   1-9     = Hash algorithms
- *   10-19   = Symmetric AEAD (AES-GCM)
- *   12-19   = Symmetric block ciphers (AES-CBC)
- *   20-29   = MAC algorithms (HMAC)
+ *   1-9     = Hash algorithms (SHA-256, SHA-512)
+ *   10-19   = Symmetric encryption (10-11: AES-GCM, 12-13: AES-CBC)
+ *   20-29   = MAC algorithms (HMAC-SHA256, HMAC-SHA512)
  *   30-39   = Asymmetric signatures (Ed25519)
- *   40-49   = Additional AEAD and key exchange
- *   50-59   = Key derivation functions
+ *   40-49   = Additional AEAD and key exchange (ChaCha20-Poly1305, X25519)
+ *   50-59   = Key derivation functions (HKDF)
  *
  * Values are stable ABI - do not renumber existing algorithms.
  */

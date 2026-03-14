@@ -35,36 +35,35 @@ struct kv_alg_info {
 	uint32_t    ai_default_bits;/* default key size in bits */
 	uint32_t    ai_min_bits;    /* minimum key size */
 	uint32_t    ai_max_bits;    /* maximum key size */
-	int         ai_crypto_alg;  /* OpenCrypto algorithm ID */
 	const char *ai_name;        /* human readable name */
 };
 
 static const struct kv_alg_info kv_algorithms[] = {
 	/* Hash algorithms (no key material) */
-	{ KV_ALG_SHA256,      0,    0,    0,    CRYPTO_SHA2_256, "SHA-256" },
-	{ KV_ALG_SHA512,      0,    0,    0,    CRYPTO_SHA2_512, "SHA-512" },
+	{ KV_ALG_SHA256,      0,    0,    0,    "SHA-256" },
+	{ KV_ALG_SHA512,      0,    0,    0,    "SHA-512" },
 
 	/* Symmetric encryption */
-	{ KV_ALG_AES128_GCM,  128,  128,  128,  CRYPTO_AES_NIST_GCM_16, "AES-128-GCM" },
-	{ KV_ALG_AES256_GCM,  256,  256,  256,  CRYPTO_AES_NIST_GCM_16, "AES-256-GCM" },
-	{ KV_ALG_AES128_CBC,  128,  128,  128,  CRYPTO_AES_CBC,  "AES-128-CBC" },
-	{ KV_ALG_AES256_CBC,  256,  256,  256,  CRYPTO_AES_CBC,  "AES-256-CBC" },
-	{ KV_ALG_CHACHA20_POLY1305, 256, 256, 256, CRYPTO_CHACHA20_POLY1305, "ChaCha20-Poly1305" },
+	{ KV_ALG_AES128_GCM,  128,  128,  128,  "AES-128-GCM" },
+	{ KV_ALG_AES256_GCM,  256,  256,  256,  "AES-256-GCM" },
+	{ KV_ALG_AES128_CBC,  128,  128,  128,  "AES-128-CBC" },
+	{ KV_ALG_AES256_CBC,  256,  256,  256,  "AES-256-CBC" },
+	{ KV_ALG_CHACHA20_POLY1305, 256, 256, 256, "ChaCha20-Poly1305" },
 
 	/* MAC algorithms */
-	{ KV_ALG_HMAC_SHA256, 256,  128,  512,  CRYPTO_SHA2_256_HMAC, "HMAC-SHA256" },
-	{ KV_ALG_HMAC_SHA512, 512,  256,  1024, CRYPTO_SHA2_512_HMAC, "HMAC-SHA512" },
+	{ KV_ALG_HMAC_SHA256, 256,  128,  512,  "HMAC-SHA256" },
+	{ KV_ALG_HMAC_SHA512, 512,  256,  1024, "HMAC-SHA512" },
 
-	/* Asymmetric algorithms (no OpenCrypto session) */
-	{ KV_ALG_ED25519,     256,  256,  256,  0, "Ed25519" },
-	{ KV_ALG_X25519,      256,  256,  256,  0, "X25519" },
+	/* Asymmetric algorithms */
+	{ KV_ALG_ED25519,     256,  256,  256,  "Ed25519" },
+	{ KV_ALG_X25519,      256,  256,  256,  "X25519" },
 
-	/* Key derivation (uses HMAC internally, not OpenCrypto session) */
-	{ KV_ALG_HKDF_SHA256, 256,  128,  8160, 0, "HKDF-SHA256" },
-	{ KV_ALG_HKDF_SHA512, 512,  128,  16320, 0, "HKDF-SHA512" },
+	/* Key derivation */
+	{ KV_ALG_HKDF_SHA256, 256,  128,  8160, "HKDF-SHA256" },
+	{ KV_ALG_HKDF_SHA512, 512,  128,  16320, "HKDF-SHA512" },
 
 	/* Terminator */
-	{ KV_ALG_NONE, 0, 0, 0, 0, NULL }
+	{ KV_ALG_NONE, 0, 0, 0, NULL }
 };
 
 /*
@@ -152,8 +151,7 @@ kv_file_alloc(struct kv_softc *sc)
 	kf->kf_nkeys = 0;
 	kf->kf_keybytes = 0;
 	kf->kf_caps = KV_CAP_ALL;
-	kf->kf_pending_ops = 0;
-	kf->kf_completed_ops = 0;
+	/* kf_pending_ops and kf_completed_ops zeroed by M_ZERO */
 	knlist_init_mtx(&kf->kf_sel.si_note, &kf->kf_mtx);
 
 	return (kf);

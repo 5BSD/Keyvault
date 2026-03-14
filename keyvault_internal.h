@@ -151,8 +151,13 @@ struct kv_file {
 	size_t                   kf_keybytes;   /* total key material bytes */
 	uint32_t                 kf_caps;       /* capability flags (protected by kf_mtx) */
 	struct selinfo           kf_sel;        /* for select/poll/kevent */
-	uint32_t                 kf_pending_ops; /* pending async operations */
-	uint32_t                 kf_completed_ops; /* completed async operations */
+	/*
+	 * Async operation counters - placeholder for future async support.
+	 * Currently unused; all crypto operations are synchronous.
+	 * See kv_poll() and kv_kqfilter() in keyvault.c.
+	 */
+	uint32_t                 kf_pending_ops;
+	uint32_t                 kf_completed_ops;
 };
 
 /*

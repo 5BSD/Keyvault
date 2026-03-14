@@ -60,7 +60,7 @@ kv_ed25519_seed_keypair(unsigned char *pk, unsigned char *sk,
 	/* Clear sensitive data */
 	explicit_bzero(az, sizeof(az));
 
-	return 0;
+	return (0);
 }
 
 /*
@@ -76,7 +76,7 @@ kv_ed25519_keypair(unsigned char *pk, unsigned char *sk)
 	ret = kv_ed25519_seed_keypair(pk, sk, seed);
 	explicit_bzero(seed, sizeof(seed));
 
-	return ret;
+	return (ret);
 }
 
 /*
@@ -135,7 +135,7 @@ kv_ed25519_sign_detached(unsigned char *sig, const unsigned char *m,
 	explicit_bzero(az, sizeof(az));
 	explicit_bzero(nonce, sizeof(nonce));
 
-	return 0;
+	return (0);
 }
 
 /*
@@ -161,16 +161,16 @@ kv_ed25519_verify_detached(const unsigned char *sig, const unsigned char *m,
 	/* Validate signature and public key */
 	if (sc25519_is_canonical(sig + 32) == 0 ||
 	    ge25519_has_small_order(sig) != 0) {
-		return -1;
+		return (-1);
 	}
 	if (ge25519_is_canonical(pk) == 0 ||
 	    ge25519_has_small_order(pk) != 0) {
-		return -1;
+		return (-1);
 	}
 
 	/* Decode public key */
 	if (ge25519_frombytes_negate_vartime(&A, pk) != 0) {
-		return -1;
+		return (-1);
 	}
 
 	/* Compute challenge: H(R || pk || message) */
@@ -189,8 +189,8 @@ kv_ed25519_verify_detached(const unsigned char *sig, const unsigned char *m,
 
 	/* Compare R' with R from signature */
 	if (crypto_verify_32(rcheck, sig) != 0) {
-		return -1;
+		return (-1);
 	}
 
-	return 0;
+	return (0);
 }

@@ -50,6 +50,22 @@ hkdf_hash_params(int hash_alg, size_t *hash_len, size_t *block_len)
 }
 
 /*
+ * Hand-rolled HMAC implementations.
+ *
+ * We implement HMAC directly here rather than using OpenCrypto's HMAC
+ * for two reasons:
+ *
+ * 1. HKDF requires raw HMAC with arbitrary key/data, not the OpenCrypto
+ *    session-based API which is designed for userspace requests.
+ *
+ * 2. The SHA2 primitives (SHA256_Init, etc.) are always available in
+ *    the kernel via <crypto/sha2/sha256.h>. This avoids OpenCrypto
+ *    session overhead for internal key derivation operations.
+ *
+ * The implementation follows RFC 2104 exactly: H(K XOR opad || H(K XOR ipad || text))
+ */
+
+/*
  * HMAC-SHA256
  */
 static void
