@@ -6,7 +6,12 @@
  * Ed25519 digital signature implementation for keyvault
  *
  * Uses primitives from FreeBSD's crypto.ko (libsodium ed25519_ref10)
+ *
+ * Note: Empty messages (mlen == 0) are valid for Ed25519 signing/verification.
  */
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

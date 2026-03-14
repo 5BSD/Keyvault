@@ -7,6 +7,9 @@
  * RFC 5869
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -146,6 +149,8 @@ hmac_sha512(unsigned char *out,
 
 /*
  * HMAC wrapper
+ *
+ * Caller must ensure hash_alg is valid (validated by hkdf_hash_params).
  */
 static void
 hmac(unsigned char *out, int hash_alg,
@@ -158,6 +163,13 @@ hmac(unsigned char *out, int hash_alg,
 		break;
 	case KV_HKDF_HASH_SHA512:
 		hmac_sha512(out, key, key_len, data, data_len);
+		break;
+	default:
+		/*
+		 * Should never happen - callers validate via hkdf_hash_params.
+		 * Zero output to avoid undefined behavior.
+		 */
+		memset(out, 0, 64);  /* Max hash size */
 		break;
 	}
 }

@@ -11,13 +11,14 @@
 
 #ifdef _KERNEL
 
+#include "keyvault.h"
+
 /*
  * Ed25519 key and signature sizes
+ *
+ * These are defined in keyvault.h for userspace compatibility.
+ * We use the same constants here via include.
  */
-#define KV_ED25519_SEED_SIZE      32  /* Random seed */
-#define KV_ED25519_PUBLIC_SIZE    32  /* Public key */
-#define KV_ED25519_SECRET_SIZE    64  /* Secret key (seed || public) */
-#define KV_ED25519_SIGNATURE_SIZE 64  /* Signature */
 
 /*
  * Generate an Ed25519 keypair with random seed

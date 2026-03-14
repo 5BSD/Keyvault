@@ -8,6 +8,9 @@
  * Handles key creation, destruction, reference counting, and lookup.
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -201,9 +204,13 @@ kv_file_free(struct kv_file *kf)
 		kv_key_release(kk);
 	}
 
-	/* Destroy kqueue notification list */
-	knlist_destroy(&kf->kf_sel.si_note);
+	/*
+	 * Destroy kqueue notification list.
+	 * seldrain() must come first to wait for any threads blocked
+	 * on the selinfo, then knlist_destroy() can safely tear down.
+	 */
 	seldrain(&kf->kf_sel);
+	knlist_destroy(&kf->kf_sel.si_note);
 
 	mtx_destroy(&kf->kf_mtx);
 	free(kf, M_KEYVAULT);
@@ -399,6 +406,21 @@ kv_key_free(struct kv_key *kk)
 }
 
 /*
+ * Cleanup a partially constructed key (before it's added to any list)
+ *
+ * Use this when key creation fails partway through.
+ * Does NOT fire DTrace probes or check refcount - the key was never
+ * fully constructed.
+ */
+static void
+kv_key_cleanup_partial(struct kv_key *kk)
+{
+	kv_key_free_material(kk);
+	mtx_destroy(&kk->kk_mtx);
+	free(kk, M_KEYVAULT);
+}
+
+/*
  * Generate a new key
  */
 int
@@ -443,8 +465,7 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 	/* Generate key material (may sleep) */
 	error = kv_key_alloc_material(kk, keybits);
 	if (error != 0) {
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (error);
 	}
 
@@ -468,18 +489,14 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 	 * This fixes the TOCTOU race in the original code.
 	 */
 	KV_FILE_LOCK(kf);
-	if (kf->kf_nkeys >= kv_max_keys_per_file) {
+	if (kf->kf_nkeys >= kv_get_max_keys_per_file()) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (EMFILE);
 	}
-	if (kf->kf_keybytes + matlen > kv_max_key_bytes) {
+	if (kf->kf_keybytes + matlen > kv_get_max_key_bytes()) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (ENOSPC);
 	}
 
@@ -487,9 +504,7 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 	kk->kk_id = kv_key_gen_id(kf);
 	if (kk->kk_id == 0) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (EAGAIN);
 	}
 
@@ -560,8 +575,7 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 		if (keylen != KV_ED25519_SEED_SIZE) {
 			explicit_bzero(keybuf, keylen);
 			free(keybuf, M_KEYVAULT);
-			mtx_destroy(&kk->kk_mtx);
-			free(kk, M_KEYVAULT);
+			kv_key_cleanup_partial(kk);
 			return (EINVAL);
 		}
 
@@ -569,8 +583,7 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 		if (kv_ed25519_seed_keypair(pk, sk, keybuf) != 0) {
 			explicit_bzero(keybuf, keylen);
 			free(keybuf, M_KEYVAULT);
-			mtx_destroy(&kk->kk_mtx);
-			free(kk, M_KEYVAULT);
+			kv_key_cleanup_partial(kk);
 			return (EIO);
 		}
 
@@ -598,8 +611,7 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 		if (keylen != KV_X25519_SCALAR_SIZE) {
 			explicit_bzero(keybuf, keylen);
 			free(keybuf, M_KEYVAULT);
-			mtx_destroy(&kk->kk_mtx);
-			free(kk, M_KEYVAULT);
+			kv_key_cleanup_partial(kk);
 			return (EINVAL);
 		}
 
@@ -607,8 +619,7 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 		if (kv_x25519_scalarmult_base(pk, keybuf) != 0) {
 			explicit_bzero(keybuf, keylen);
 			free(keybuf, M_KEYVAULT);
-			mtx_destroy(&kk->kk_mtx);
-			free(kk, M_KEYVAULT);
+			kv_key_cleanup_partial(kk);
 			return (EIO);
 		}
 
@@ -650,18 +661,14 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 
 	/* Check limits and insert */
 	KV_FILE_LOCK(kf);
-	if (kf->kf_nkeys >= kv_max_keys_per_file) {
+	if (kf->kf_nkeys >= kv_get_max_keys_per_file()) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (EMFILE);
 	}
-	if (kf->kf_keybytes + kk->kk_matlen > kv_max_key_bytes) {
+	if (kf->kf_keybytes + kk->kk_matlen > kv_get_max_key_bytes()) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (ENOSPC);
 	}
 
@@ -669,9 +676,7 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 	kk->kk_id = kv_key_gen_id(kf);
 	if (kk->kk_id == 0) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (EAGAIN);
 	}
 
@@ -741,18 +746,14 @@ kv_key_create_from_material(struct kv_file *kf, uint32_t algorithm,
 
 	/* Atomically check limits and insert */
 	KV_FILE_LOCK(kf);
-	if (kf->kf_nkeys >= kv_max_keys_per_file) {
+	if (kf->kf_nkeys >= kv_get_max_keys_per_file()) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (EMFILE);
 	}
-	if (kf->kf_keybytes + matlen > kv_max_key_bytes) {
+	if (kf->kf_keybytes + matlen > kv_get_max_key_bytes()) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (ENOSPC);
 	}
 
@@ -760,9 +761,7 @@ kv_key_create_from_material(struct kv_file *kf, uint32_t algorithm,
 	kk->kk_id = kv_key_gen_id(kf);
 	if (kk->kk_id == 0) {
 		KV_FILE_UNLOCK(kf);
-		kv_key_free_material(kk);
-		mtx_destroy(&kk->kk_mtx);
-		free(kk, M_KEYVAULT);
+		kv_key_cleanup_partial(kk);
 		return (EAGAIN);
 	}
 

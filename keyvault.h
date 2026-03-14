@@ -16,31 +16,41 @@
 
 /*
  * Algorithm identifiers
+ *
+ * Numbering scheme:
+ *   0       = None/invalid
+ *   1-9     = Hash algorithms
+ *   10-19   = Symmetric AEAD (AES-GCM)
+ *   12-19   = Symmetric block ciphers (AES-CBC)
+ *   20-29   = MAC algorithms (HMAC)
+ *   30-39   = Asymmetric signatures (Ed25519)
+ *   40-49   = Additional AEAD and key exchange
+ *   50-59   = Key derivation functions
+ *
+ * Values are stable ABI - do not renumber existing algorithms.
  */
 #define KV_ALG_NONE             0
 
-/* Hash algorithms */
+/* Hash algorithms (1-9) */
 #define KV_ALG_SHA256           1
 #define KV_ALG_SHA512           2
 
-/* Symmetric encryption */
-#define KV_ALG_AES128_GCM       10
-#define KV_ALG_AES256_GCM       11
-#define KV_ALG_AES128_CBC       12
-#define KV_ALG_AES256_CBC       13
+/* Symmetric encryption (10-19) */
+#define KV_ALG_AES128_GCM       10	/* AES-128 in GCM mode (AEAD) */
+#define KV_ALG_AES256_GCM       11	/* AES-256 in GCM mode (AEAD) */
+#define KV_ALG_AES128_CBC       12	/* AES-128 in CBC mode */
+#define KV_ALG_AES256_CBC       13	/* AES-256 in CBC mode */
 
-/* MAC algorithms */
+/* MAC algorithms (20-29) */
 #define KV_ALG_HMAC_SHA256      20
 #define KV_ALG_HMAC_SHA512      21
 
-/* Asymmetric algorithms */
+/* Asymmetric algorithms (30-49) */
 #define KV_ALG_ED25519          30	/* Ed25519 digital signatures */
-#define KV_ALG_X25519           41	/* X25519 key exchange */
-
-/* Additional AEAD */
 #define KV_ALG_CHACHA20_POLY1305 40	/* ChaCha20-Poly1305 AEAD */
+#define KV_ALG_X25519           41	/* X25519 key exchange (ECDH) */
 
-/* Key derivation */
+/* Key derivation (50-59) */
 #define KV_ALG_HKDF_SHA256      50	/* HKDF with SHA-256 */
 #define KV_ALG_HKDF_SHA512      51	/* HKDF with SHA-512 */
 
@@ -92,6 +102,15 @@
 #define KV_MAX_AAD_SIZE         65536   /* Max additional auth data */
 #define KV_MAX_DATA_SIZE        (1024 * 1024)  /* Max encrypt/decrypt size */
 #define KV_MAX_LIST_KEYS        1024    /* Max keys in list request */
+
+/*
+ * Key identifiers
+ *
+ * Key IDs are 64-bit unsigned integers assigned by the kernel.
+ * Key ID 0 is reserved and never assigned - it can be used by
+ * applications as a sentinel value to indicate "no key".
+ */
+#define KV_KEY_ID_INVALID	0	/* Reserved, never assigned */
 
 /*
  * ioctl structures

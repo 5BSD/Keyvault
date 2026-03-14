@@ -8,6 +8,9 @@
  * Main module: initialization, device registration, ioctl dispatch
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -23,6 +26,7 @@
 #include <sys/event.h>
 #include <sys/selinfo.h>
 #include <sys/poll.h>
+#include <machine/atomic.h>
 
 #include "keyvault_internal.h"
 
@@ -57,10 +61,51 @@ SYSCTL_NODE(_security, OID_AUTO, keyvault, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
 #define KV_SYSCTL_MIN_DATA_SIZE		64		/* 64 bytes minimum */
 #define KV_SYSCTL_MAX_DATA_SIZE		(16 * 1024 * 1024)  /* 16MB max */
 
-unsigned int kv_max_keys_per_file = KV_DEFAULT_MAX_KEYS_PER_FILE;
-unsigned int kv_max_key_bytes = KV_DEFAULT_MAX_KEY_BYTES;
-unsigned int kv_max_files = KV_DEFAULT_MAX_FILES;
-unsigned int kv_max_data_size = KV_DEFAULT_MAX_DATA_SIZE;
+/*
+ * Sysctl tunable variables.
+ *
+ * These are accessed via accessor functions that use atomic operations
+ * to ensure correct behavior on all architectures when sysctl modifies
+ * them concurrently with reads.
+ *
+ * Note: The variables themselves are not volatile because the SYSCTL_PROC
+ * macro doesn't accept volatile pointers. Instead, we use atomic_load_int()
+ * which includes the necessary memory barriers.
+ */
+static u_int kv_max_keys_per_file = KV_DEFAULT_MAX_KEYS_PER_FILE;
+static u_int kv_max_key_bytes = KV_DEFAULT_MAX_KEY_BYTES;
+static u_int kv_max_files = KV_DEFAULT_MAX_FILES;
+static u_int kv_max_data_size = KV_DEFAULT_MAX_DATA_SIZE;
+
+/*
+ * Accessor functions for sysctl variables.
+ *
+ * Use atomic_load_int() to ensure we see the most recent value written
+ * by the sysctl handler, even on weakly-ordered architectures.
+ */
+u_int
+kv_get_max_keys_per_file(void)
+{
+	return (atomic_load_int(&kv_max_keys_per_file));
+}
+
+u_int
+kv_get_max_key_bytes(void)
+{
+	return (atomic_load_int(&kv_max_key_bytes));
+}
+
+u_int
+kv_get_max_files(void)
+{
+	return (atomic_load_int(&kv_max_files));
+}
+
+u_int
+kv_get_max_data_size(void)
+{
+	return (atomic_load_int(&kv_max_data_size));
+}
 
 /*
  * Sysctl handler with bounds checking
@@ -102,7 +147,7 @@ kv_sysctl_uint_bounded(SYSCTL_HANDLER_ARGS)
 	if (val < min_val || val > max_val)
 		return (EINVAL);
 
-	*(unsigned int *)arg1 = val;
+	atomic_store_int((u_int *)arg1, val);
 	return (0);
 }
 
@@ -222,7 +267,7 @@ kv_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 		kv_file_free(kf);
 		return (ENXIO);
 	}
-	if (sc->sc_nfiles >= kv_max_files) {
+	if (sc->sc_nfiles >= kv_get_max_files()) {
 		KV_UNLOCK(sc);
 		kv_file_free(kf);
 		return (EMFILE);
@@ -288,6 +333,12 @@ kv_file_dtor(void *data)
  * Poll for events (select/poll)
  *
  * Returns readable when completed async operations are available.
+ *
+ * TODO: Async operation support is not yet implemented.
+ * Currently all crypto operations are synchronous, so kf_completed_ops
+ * is never incremented. This infrastructure is here for future async
+ * operation support. For now, POLLIN always returns not-ready and
+ * POLLOUT always returns ready.
  */
 int
 kv_poll(struct cdev *dev, int events, struct thread *td)
@@ -303,8 +354,8 @@ kv_poll(struct cdev *dev, int events, struct thread *td)
 	KV_FILE_LOCK(kf);
 
 	/*
-	 * POLLIN/POLLRDNORM: readable when completed operations available
-	 * For now, always readable since we use synchronous ops
+	 * POLLIN/POLLRDNORM: readable when completed operations available.
+	 * TODO: Not yet functional - async operations not implemented.
 	 */
 	if (events & (POLLIN | POLLRDNORM)) {
 		if (kf->kf_completed_ops > 0)
@@ -324,6 +375,9 @@ kv_poll(struct cdev *dev, int events, struct thread *td)
 
 /*
  * Kqueue filter operations
+ *
+ * TODO: Async operation support is not yet implemented.
+ * See kv_poll() comment for details.
  */
 static int kv_kqfilter_read(struct knote *kn, long hint);
 static void kv_kqfilter_detach(struct knote *kn);

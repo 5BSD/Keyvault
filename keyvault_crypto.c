@@ -9,6 +9,9 @@
  * using the FreeBSD OpenCrypto framework.
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -227,8 +230,10 @@ kv_crypto_encrypt(struct kv_file *kf, struct kv_encrypt_req *req)
 	size_t ivlen;
 	int error;
 
-	/* Validate input sizes */
-	if (req->plaintext_len == 0 || req->plaintext_len > kv_max_data_size)
+	/* Validate pointers and input sizes */
+	if (req->plaintext == NULL || req->ciphertext == NULL)
+		return (EINVAL);
+	if (req->plaintext_len == 0 || req->plaintext_len > kv_get_max_data_size())
 		return (EINVAL);
 
 	/* Acquire key */
@@ -345,8 +350,10 @@ kv_crypto_decrypt(struct kv_file *kf, struct kv_decrypt_req *req)
 	size_t ivlen;
 	int error;
 
-	/* Validate input sizes */
-	if (req->ciphertext_len == 0 || req->ciphertext_len > kv_max_data_size)
+	/* Validate pointers and input sizes */
+	if (req->ciphertext == NULL || req->plaintext == NULL)
+		return (EINVAL);
+	if (req->ciphertext_len == 0 || req->ciphertext_len > kv_get_max_data_size())
 		return (EINVAL);
 	if (req->iv == NULL || req->iv_len == 0)
 		return (EINVAL);
@@ -454,8 +461,16 @@ kv_crypto_aead_encrypt(struct kv_file *kf, struct kv_aead_encrypt_req *req)
 	size_t nonce_len, tag_len, total_len;
 	int error;
 
+	/* Validate pointers */
+	if (req->ciphertext == NULL || req->tag == NULL)
+		return (EINVAL);
+	if (req->plaintext_len > 0 && req->plaintext == NULL)
+		return (EINVAL);
+	if (req->aad_len > 0 && req->aad == NULL)
+		return (EINVAL);
+
 	/* Validate input sizes */
-	if (req->plaintext_len > kv_max_data_size)
+	if (req->plaintext_len > kv_get_max_data_size())
 		return (EINVAL);
 	if (req->aad_len > KV_MAX_AAD_SIZE)
 		return (EINVAL);
@@ -618,12 +633,18 @@ kv_crypto_aead_decrypt(struct kv_file *kf, struct kv_aead_decrypt_req *req)
 	size_t nonce_len, tag_len, total_len;
 	int error;
 
+	/* Validate pointers */
+	if (req->plaintext == NULL || req->nonce == NULL || req->tag == NULL)
+		return (EINVAL);
+	if (req->ciphertext_len > 0 && req->ciphertext == NULL)
+		return (EINVAL);
+	if (req->aad_len > 0 && req->aad == NULL)
+		return (EINVAL);
+
 	/* Validate input sizes */
-	if (req->ciphertext_len > kv_max_data_size)
+	if (req->ciphertext_len > kv_get_max_data_size())
 		return (EINVAL);
 	if (req->aad_len > KV_MAX_AAD_SIZE)
-		return (EINVAL);
-	if (req->nonce == NULL || req->tag == NULL)
 		return (EINVAL);
 
 	/* Check for integer overflow in total_len calculation */
@@ -765,7 +786,7 @@ kv_crypto_sign(struct kv_file *kf, struct kv_sign_req *req)
 	    req->signature == NULL || req->signature_len < KV_ED25519_SIGNATURE_SIZE)
 		return (EINVAL);
 
-	if (req->data_len > kv_max_data_size)
+	if (req->data_len > kv_get_max_data_size())
 		return (EFBIG);
 
 	/* Acquire key */
@@ -849,7 +870,7 @@ kv_crypto_verify(struct kv_file *kf, struct kv_verify_req *req)
 	    req->signature == NULL || req->signature_len != KV_ED25519_SIGNATURE_SIZE)
 		return (EINVAL);
 
-	if (req->data_len > kv_max_data_size)
+	if (req->data_len > kv_get_max_data_size())
 		return (EFBIG);
 
 	/* Acquire key */
@@ -934,8 +955,10 @@ kv_crypto_mac(struct kv_file *kf, struct kv_mac_req *req)
 	size_t mac_len;
 	int error;
 
-	/* Validate input sizes */
-	if (req->data_len == 0 || req->data_len > kv_max_data_size)
+	/* Validate pointers and input sizes */
+	if (req->data == NULL || req->mac == NULL)
+		return (EINVAL);
+	if (req->data_len == 0 || req->data_len > kv_get_max_data_size())
 		return (EINVAL);
 
 	/* Acquire key */
@@ -1034,8 +1057,10 @@ kv_crypto_hash(struct kv_hash_req *req)
 	size_t hash_len;
 	int error;
 
-	/* Validate input sizes */
-	if (req->data_len == 0 || req->data_len > kv_max_data_size)
+	/* Validate pointers and input sizes */
+	if (req->data == NULL || req->digest == NULL)
+		return (EINVAL);
+	if (req->data_len == 0 || req->data_len > kv_get_max_data_size())
 		return (EINVAL);
 
 	/* Determine hash length and algorithm */
@@ -1134,20 +1159,24 @@ kv_crypto_get_pubkey(struct kv_file *kf, struct kv_getpubkey_req *req)
 		return (ENOENT);
 	}
 
-	/* Must be an asymmetric key (Ed25519 or X25519) */
+	/*
+	 * Must be an asymmetric key (Ed25519 or X25519).
+	 * Note: kk_type, kk_algorithm, kk_pubkey, and kk_publen are all
+	 * immutable after key creation, so no locking is needed here.
+	 */
 	if (kk->kk_type != KV_KEY_TYPE_ASYMMETRIC || kk->kk_pubkey == NULL) {
 		kv_key_release(kk);
 		return (EINVAL);
 	}
 
-	/* Verify algorithm is Ed25519 or X25519 */
+	/* Verify algorithm is Ed25519 or X25519 (immutable field) */
 	if (kk->kk_algorithm != KV_ALG_ED25519 &&
 	    kk->kk_algorithm != KV_ALG_X25519) {
 		kv_key_release(kk);
 		return (EINVAL);
 	}
 
-	/* Check buffer size against actual public key length */
+	/* Check buffer size against actual public key length (immutable) */
 	if (req->pubkey_len < kk->kk_publen) {
 		kv_key_release(kk);
 		return (ENOSPC);
@@ -1177,6 +1206,12 @@ kv_crypto_get_pubkey(struct kv_file *kf, struct kv_getpubkey_req *req)
  * X25519 key exchange
  *
  * Computes a shared secret from our private key and peer's public key.
+ *
+ * SECURITY NOTE: The raw X25519 shared secret returned by this function
+ * should NOT be used directly as a symmetric key. Applications should
+ * process the shared secret through a KDF (such as HKDF via KV_IOC_DERIVE)
+ * before using it for encryption. The raw output has non-uniform
+ * distribution and should be considered input key material, not a key.
  */
 int
 kv_crypto_keyexchange(struct kv_file *kf, struct kv_keyexchange_req *req)

@@ -72,12 +72,13 @@ SDT_PROBE_DECLARE(keyvault, error, key, notfound);
 #define KV_DEFAULT_MAX_DATA_SIZE        (1024 * 1024)   /* 1MB max encrypt/decrypt */
 
 /*
- * Sysctl tunable variables (defined in keyvault.c)
+ * Sysctl tunable accessors (defined in keyvault.c)
+ * Use these instead of direct variable access for atomic correctness.
  */
-extern unsigned int kv_max_keys_per_file;
-extern unsigned int kv_max_key_bytes;
-extern unsigned int kv_max_files;
-extern unsigned int kv_max_data_size;
+u_int kv_get_max_keys_per_file(void);
+u_int kv_get_max_key_bytes(void);
+u_int kv_get_max_files(void);
+u_int kv_get_max_data_size(void);
 
 /*
  * Memory allocation type
@@ -181,6 +182,14 @@ struct kv_file {
  * For asymmetric keys (Ed25519):
  *   kk_material = 64-byte secret key
  *   kk_pubkey = 32-byte public key (CAN be exported)
+ *
+ * Field mutability:
+ *   - kk_id, kk_algorithm, kk_keybits, kk_type: Immutable after creation
+ *   - kk_material, kk_matlen, kk_pubkey, kk_publen: Immutable after creation
+ *   - kk_created, kk_expires: Immutable after creation
+ *   - kk_state: Protected by kk_mtx
+ *   - kk_refcnt: Atomic operations
+ *   - kk_session, kk_have_session: Protected by kk_mtx
  */
 struct kv_key {
 	uint64_t                 kk_id;         /* unique key identifier */

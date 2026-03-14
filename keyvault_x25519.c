@@ -9,6 +9,9 @@
  * implementation in sys/crypto/curve25519.h
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <crypto/curve25519.h>
