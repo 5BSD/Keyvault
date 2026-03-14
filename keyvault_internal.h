@@ -215,6 +215,7 @@ int             kv_file_restrict(struct kv_file *kf, uint32_t newcaps);
 int             kv_key_generate(struct kv_file *kf, uint32_t algorithm,
                                 uint32_t keybits, uint32_t ttl,
                                 uint64_t *key_id_out);
+int             kv_key_import(struct kv_file *kf, struct kv_import_req *req);
 int             kv_key_destroy(struct kv_file *kf, uint64_t key_id);
 int             kv_key_revoke(struct kv_file *kf, uint64_t key_id);
 

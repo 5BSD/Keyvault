@@ -451,6 +451,146 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 }
 
 /*
+ * Import a key from raw material
+ *
+ * For Ed25519: key_material is a 32-byte seed
+ * For symmetric keys: key_material is the raw key bytes
+ */
+int
+kv_key_import(struct kv_file *kf, struct kv_import_req *req)
+{
+	const struct kv_alg_info *ai;
+	struct kv_key *kk;
+	struct timeval tv;
+	uint8_t *keybuf = NULL;
+	size_t keylen;
+	int error;
+
+	/* Validate algorithm */
+	ai = kv_alg_lookup(req->algorithm);
+	if (ai == NULL)
+		return (EINVAL);
+
+	/* Validate key material length */
+	if (req->key_material == NULL || req->key_len == 0)
+		return (EINVAL);
+
+	/* Copy key material from userspace */
+	keylen = req->key_len;
+	if (keylen > KV_MAX_KEY_SIZE)
+		return (EINVAL);
+
+	keybuf = malloc(keylen, M_KEYVAULT, M_WAITOK);
+	error = copyin(req->key_material, keybuf, keylen);
+	if (error != 0) {
+		explicit_bzero(keybuf, keylen);
+		free(keybuf, M_KEYVAULT);
+		return (error);
+	}
+
+	/* Allocate key structure */
+	kk = malloc(sizeof(*kk), M_KEYVAULT, M_WAITOK | M_ZERO);
+	mtx_init(&kk->kk_mtx, "kv_key", NULL, MTX_DEF);
+	refcount_init(&kk->kk_refcnt, 1);
+	kk->kk_algorithm = req->algorithm;
+	kk->kk_state = KV_KEY_STATE_ACTIVE;
+	kk->kk_file = kf;
+
+	/* Handle Ed25519: import from seed */
+	if (req->algorithm == KV_ALG_ED25519) {
+		unsigned char pk[KV_ED25519_PUBLIC_SIZE];
+		unsigned char sk[KV_ED25519_SECRET_SIZE];
+
+		if (keylen != KV_ED25519_SEED_SIZE) {
+			explicit_bzero(keybuf, keylen);
+			free(keybuf, M_KEYVAULT);
+			mtx_destroy(&kk->kk_mtx);
+			free(kk, M_KEYVAULT);
+			return (EINVAL);
+		}
+
+		/* Generate keypair from seed */
+		if (kv_ed25519_seed_keypair(pk, sk, keybuf) != 0) {
+			explicit_bzero(keybuf, keylen);
+			free(keybuf, M_KEYVAULT);
+			mtx_destroy(&kk->kk_mtx);
+			free(kk, M_KEYVAULT);
+			return (EIO);
+		}
+
+		/* Allocate and copy secret key */
+		kk->kk_material = malloc(KV_ED25519_SECRET_SIZE, M_KEYVAULT,
+		    M_WAITOK | M_ZERO);
+		memcpy(kk->kk_material, sk, KV_ED25519_SECRET_SIZE);
+		kk->kk_matlen = KV_ED25519_SECRET_SIZE;
+		kk->kk_keybits = 256;
+
+		/* Allocate and copy public key */
+		kk->kk_pubkey = malloc(KV_ED25519_PUBLIC_SIZE, M_KEYVAULT,
+		    M_WAITOK | M_ZERO);
+		memcpy(kk->kk_pubkey, pk, KV_ED25519_PUBLIC_SIZE);
+		kk->kk_publen = KV_ED25519_PUBLIC_SIZE;
+
+		kk->kk_type = KV_KEY_TYPE_ASYMMETRIC;
+
+		explicit_bzero(pk, sizeof(pk));
+		explicit_bzero(sk, sizeof(sk));
+	} else {
+		/* Symmetric key: use raw material directly */
+		kk->kk_material = malloc(keylen, M_KEYVAULT, M_WAITOK);
+		memcpy(kk->kk_material, keybuf, keylen);
+		kk->kk_matlen = keylen;
+		kk->kk_keybits = keylen * 8;
+		kk->kk_type = KV_KEY_TYPE_SYMMETRIC;
+		kk->kk_pubkey = NULL;
+		kk->kk_publen = 0;
+	}
+
+	/* Clear temporary buffer */
+	explicit_bzero(keybuf, keylen);
+	free(keybuf, M_KEYVAULT);
+
+	/* Set timestamps */
+	getmicrotime(&tv);
+	kk->kk_created = tv.tv_sec;
+	kk->kk_expires = 0;
+
+	/* Check limits and insert */
+	KV_FILE_LOCK(kf);
+	if (kf->kf_nkeys >= kv_max_keys_per_file) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (EMFILE);
+	}
+	if (kf->kf_keybytes + kk->kk_matlen > kv_max_key_bytes) {
+		KV_FILE_UNLOCK(kf);
+		kv_key_free_material(kk);
+		mtx_destroy(&kk->kk_mtx);
+		free(kk, M_KEYVAULT);
+		return (ENOSPC);
+	}
+
+	/* Generate random key ID */
+	do {
+		kk->kk_id = ((uint64_t)arc4random() << 32) | arc4random();
+	} while (kk->kk_id == 0);
+
+	/* Insert into key list */
+	LIST_INSERT_HEAD(&kf->kf_keys, kk, kk_link);
+	kf->kf_nkeys++;
+	kf->kf_keybytes += kk->kk_matlen;
+	KV_FILE_UNLOCK(kf);
+
+	SDT_PROBE3(keyvault, key, lifecycle, create,
+	    kk->kk_id, req->algorithm, kk->kk_keybits);
+
+	req->key_id = kk->kk_id;
+	return (0);
+}
+
+/*
  * Destroy a key
  */
 int

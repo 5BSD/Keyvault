@@ -70,9 +70,10 @@
 #define KV_CAP_RESTRICT         0x00000800  /* Can further restrict caps */
 #define KV_CAP_DERIVE           0x00001000  /* Can derive keys (HKDF) */
 #define KV_CAP_EXCHANGE         0x00002000  /* Can perform key exchange */
+#define KV_CAP_IMPORT           0x00004000  /* Can import keys */
 
 /* All capabilities (default for new opens) */
-#define KV_CAP_ALL              0x00003FFF
+#define KV_CAP_ALL              0x00007FFF
 
 /* Read-only operations */
 #define KV_CAP_READONLY         (KV_CAP_ENCRYPT | KV_CAP_DECRYPT | \
@@ -263,6 +264,15 @@ struct kv_derive_req {
 	uint64_t        derived_key_id; /* out: new derived key ID */
 };
 
+/* Key import request (for testing/backup restore) */
+struct kv_import_req {
+	uint32_t        algorithm;      /* in: KV_ALG_* */
+	uint32_t        flags;          /* in: KV_KEY_FLAG_* */
+	const void     *key_material;   /* in: raw key/seed bytes */
+	size_t          key_len;        /* in: key material length */
+	uint64_t        key_id;         /* out: assigned key identifier */
+};
+
 /*
  * ioctl commands
  *
@@ -291,6 +301,9 @@ struct kv_derive_req {
 /* Phase 3: Key exchange and derivation */
 #define KV_IOC_KEYEXCHANGE  _IOWR('K', 30, struct kv_keyexchange_req)
 #define KV_IOC_DERIVE       _IOWR('K', 31, struct kv_derive_req)
+
+/* Key import (for testing/backup restore) */
+#define KV_IOC_IMPORT       _IOWR('K', 40, struct kv_import_req)
 
 /*
  * X25519 / Curve25519 constants

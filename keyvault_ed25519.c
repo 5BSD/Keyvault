@@ -70,7 +70,7 @@ ed25519_clamp(unsigned char k[32])
 /*
  * Generate an Ed25519 keypair from a 32-byte seed
  */
-static int
+int
 kv_ed25519_seed_keypair(unsigned char *pk, unsigned char *sk,
     const unsigned char *seed)
 {

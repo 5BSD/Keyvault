@@ -30,6 +30,18 @@
 int kv_ed25519_keypair(unsigned char *pk, unsigned char *sk);
 
 /*
+ * Generate an Ed25519 keypair from a specific seed
+ *
+ * pk: output 32-byte public key
+ * sk: output 64-byte secret key
+ * seed: input 32-byte seed
+ *
+ * Returns 0 on success
+ */
+int kv_ed25519_seed_keypair(unsigned char *pk, unsigned char *sk,
+    const unsigned char *seed);
+
+/*
  * Sign a message (detached signature)
  *
  * sig: output 64-byte signature

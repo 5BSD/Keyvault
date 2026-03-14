@@ -760,8 +760,8 @@ kv_crypto_sign(struct kv_file *kf, struct kv_sign_req *req)
 	unsigned char sig[KV_ED25519_SIGNATURE_SIZE];
 	int error;
 
-	/* Validate parameters */
-	if (req->data == NULL || req->data_len == 0 ||
+	/* Validate parameters - empty messages (data_len == 0) are allowed */
+	if ((req->data_len > 0 && req->data == NULL) ||
 	    req->signature == NULL || req->signature_len < KV_ED25519_SIGNATURE_SIZE)
 		return (EINVAL);
 
@@ -790,24 +790,26 @@ kv_crypto_sign(struct kv_file *kf, struct kv_sign_req *req)
 	}
 	KV_KEY_UNLOCK(kk);
 
-	/* Allocate kernel buffer for data */
-	data = malloc(req->data_len, M_KEYVAULT, M_WAITOK);
-
-	/* Copy data from userspace */
-	error = copyin(req->data, data, req->data_len);
-	if (error != 0) {
-		explicit_bzero(data, req->data_len);
-		free(data, M_KEYVAULT);
-		kv_key_release(kk);
-		return (error);
+	/* Allocate and copy data from userspace (skip for empty messages) */
+	if (req->data_len > 0) {
+		data = malloc(req->data_len, M_KEYVAULT, M_WAITOK);
+		error = copyin(req->data, data, req->data_len);
+		if (error != 0) {
+			explicit_bzero(data, req->data_len);
+			free(data, M_KEYVAULT);
+			kv_key_release(kk);
+			return (error);
+		}
 	}
 
-	/* Sign the data */
+	/* Sign the data (empty message is valid for Ed25519) */
 	error = kv_ed25519_sign_detached(sig, data, req->data_len,
 	    kk->kk_material);
 	if (error != 0) {
-		explicit_bzero(data, req->data_len);
-		free(data, M_KEYVAULT);
+		if (data != NULL) {
+			explicit_bzero(data, req->data_len);
+			free(data, M_KEYVAULT);
+		}
 		kv_key_release(kk);
 		return (EIO);
 	}
@@ -822,8 +824,10 @@ kv_crypto_sign(struct kv_file *kf, struct kv_sign_req *req)
 
 	/* Cleanup - zero sensitive data before freeing */
 	explicit_bzero(sig, sizeof(sig));
-	explicit_bzero(data, req->data_len);
-	free(data, M_KEYVAULT);
+	if (data != NULL) {
+		explicit_bzero(data, req->data_len);
+		free(data, M_KEYVAULT);
+	}
 	kv_key_release(kk);
 
 	return (error);
@@ -840,8 +844,8 @@ kv_crypto_verify(struct kv_file *kf, struct kv_verify_req *req)
 	unsigned char sig[KV_ED25519_SIGNATURE_SIZE];
 	int error;
 
-	/* Validate parameters */
-	if (req->data == NULL || req->data_len == 0 ||
+	/* Validate parameters - empty messages (data_len == 0) are allowed */
+	if ((req->data_len > 0 && req->data == NULL) ||
 	    req->signature == NULL || req->signature_len != KV_ED25519_SIGNATURE_SIZE)
 		return (EINVAL);
 
@@ -870,29 +874,31 @@ kv_crypto_verify(struct kv_file *kf, struct kv_verify_req *req)
 	}
 	KV_KEY_UNLOCK(kk);
 
-	/* Allocate kernel buffer for data */
-	data = malloc(req->data_len, M_KEYVAULT, M_WAITOK);
-
-	/* Copy data from userspace */
-	error = copyin(req->data, data, req->data_len);
-	if (error != 0) {
-		explicit_bzero(data, req->data_len);
-		free(data, M_KEYVAULT);
-		kv_key_release(kk);
-		return (error);
+	/* Allocate and copy data from userspace (skip for empty messages) */
+	if (req->data_len > 0) {
+		data = malloc(req->data_len, M_KEYVAULT, M_WAITOK);
+		error = copyin(req->data, data, req->data_len);
+		if (error != 0) {
+			explicit_bzero(data, req->data_len);
+			free(data, M_KEYVAULT);
+			kv_key_release(kk);
+			return (error);
+		}
 	}
 
 	/* Copy signature from userspace */
 	error = copyin(req->signature, sig, KV_ED25519_SIGNATURE_SIZE);
 	if (error != 0) {
 		explicit_bzero(sig, sizeof(sig));
-		explicit_bzero(data, req->data_len);
-		free(data, M_KEYVAULT);
+		if (data != NULL) {
+			explicit_bzero(data, req->data_len);
+			free(data, M_KEYVAULT);
+		}
 		kv_key_release(kk);
 		return (error);
 	}
 
-	/* Verify the signature using public key */
+	/* Verify the signature using public key (empty message is valid) */
 	error = kv_ed25519_verify_detached(sig, data, req->data_len,
 	    kk->kk_pubkey);
 	req->valid = (error == 0) ? 1 : 0;
@@ -902,8 +908,10 @@ kv_crypto_verify(struct kv_file *kf, struct kv_verify_req *req)
 
 	/* Cleanup - zero sensitive data before freeing */
 	explicit_bzero(sig, sizeof(sig));
-	explicit_bzero(data, req->data_len);
-	free(data, M_KEYVAULT);
+	if (data != NULL) {
+		explicit_bzero(data, req->data_len);
+		free(data, M_KEYVAULT);
+	}
 	kv_key_release(kk);
 
 	/* Verification failure is not an error, just sets valid=0 */

@@ -600,6 +600,16 @@ kv_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		}
 		break;
 
+	case KV_IOC_IMPORT:
+		{
+			struct kv_import_req *req =
+			    (struct kv_import_req *)data;
+			error = kv_check_cap(kf, KV_CAP_IMPORT);
+			if (error == 0)
+				error = kv_key_import(kf, req);
+		}
+		break;
+
 	default:
 		error = ENOTTY;
 		break;
