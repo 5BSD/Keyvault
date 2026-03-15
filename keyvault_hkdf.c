@@ -253,7 +253,12 @@ kv_hkdf_expand(unsigned char *okm, size_t okm_len,
 	if (okm_len == 0)
 		return (0);
 
-	/* Allocate buffer for T(i-1) || info || counter */
+	/*
+	 * Allocate buffer for T(i-1) || info || counter.
+	 * Guard against overflow in size calculation.
+	 */
+	if (info_len > SIZE_MAX - hash_len - 1)
+		return (EINVAL);
 	data = malloc(hash_len + info_len + 1, M_KEYVAULT, M_WAITOK);
 
 	done = 0;

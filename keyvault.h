@@ -333,6 +333,7 @@ struct kv_import_req {
 /*
  * HKDF constants
  */
+#define KV_HKDF_MAX_SALT_SIZE   1024
 #define KV_HKDF_MAX_INFO_SIZE   1024
 #define KV_HKDF_MAX_OUTPUT_SIZE 8160  /* 255 * 32 for SHA-256 */
 

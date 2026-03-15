@@ -428,7 +428,6 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 	const struct kv_alg_info *ai;
 	struct kv_key *kk;
 	struct timeval tv;
-	size_t matlen;
 	int error;
 
 	/* Look up algorithm */
@@ -447,9 +446,6 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 	/* Validate key size */
 	if (keybits < ai->ai_min_bits || keybits > ai->ai_max_bits)
 		return (EINVAL);
-
-	/* Calculate actual material length */
-	matlen = (keybits + 7) / 8;
 
 	/* Allocate key structure before taking lock (may sleep) */
 	kk = malloc(sizeof(*kk), M_KEYVAULT, M_WAITOK | M_ZERO);
@@ -485,6 +481,11 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 	/*
 	 * Atomically check resource limits and insert.
 	 * This fixes the TOCTOU race in the original code.
+	 *
+	 * Use kk->kk_matlen (set by kv_key_alloc_material) rather than
+	 * computing from keybits, since asymmetric keys like Ed25519
+	 * store more material than their nominal key size suggests
+	 * (Ed25519: 64 bytes vs 256 bits / 8 = 32 bytes).
 	 */
 	KV_FILE_LOCK(kf);
 	if (kf->kf_nkeys >= kv_get_max_keys_per_file()) {
@@ -492,7 +493,7 @@ kv_key_generate(struct kv_file *kf, uint32_t algorithm, uint32_t keybits,
 		kv_key_cleanup_partial(kk);
 		return (EMFILE);
 	}
-	if (kf->kf_keybytes + matlen > kv_get_max_key_bytes()) {
+	if (kf->kf_keybytes + kk->kk_matlen > kv_get_max_key_bytes()) {
 		KV_FILE_UNLOCK(kf);
 		kv_key_cleanup_partial(kk);
 		return (ENOSPC);
@@ -538,6 +539,22 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 	/* Validate algorithm */
 	ai = kv_alg_lookup(req->algorithm);
 	if (ai == NULL)
+		return (EINVAL);
+
+	/*
+	 * Reject algorithms that don't use key material.
+	 * Hash algorithms have ai_default_bits == 0.
+	 */
+	if (ai->ai_default_bits == 0)
+		return (EINVAL);
+
+	/*
+	 * Reject HKDF algorithms - these are key derivation functions,
+	 * not importable key types. Keys are derived using HKDF, not
+	 * imported with it.
+	 */
+	if (req->algorithm == KV_ALG_HKDF_SHA256 ||
+	    req->algorithm == KV_ALG_HKDF_SHA512)
 		return (EINVAL);
 
 	/* Validate key material length */
@@ -638,11 +655,22 @@ kv_key_import(struct kv_file *kf, struct kv_import_req *req)
 
 		explicit_bzero(pk, sizeof(pk));
 	} else {
-		/* Symmetric key: use raw material directly */
+		/*
+		 * Symmetric key: use raw material directly.
+		 * Validate key size against algorithm requirements.
+		 */
+		uint32_t keybits = keylen * 8;
+		if (keybits < ai->ai_min_bits || keybits > ai->ai_max_bits) {
+			explicit_bzero(keybuf, keylen);
+			free(keybuf, M_KEYVAULT);
+			kv_key_cleanup_partial(kk);
+			return (EINVAL);
+		}
+
 		kk->kk_material = malloc(keylen, M_KEYVAULT, M_WAITOK);
 		memcpy(kk->kk_material, keybuf, keylen);
 		kk->kk_matlen = keylen;
-		kk->kk_keybits = keylen * 8;
+		kk->kk_keybits = keybits;
 		kk->kk_type = KV_KEY_TYPE_SYMMETRIC;
 		kk->kk_pubkey = NULL;
 		kk->kk_publen = 0;
@@ -715,9 +743,24 @@ kv_key_create_from_material(struct kv_file *kf, uint32_t algorithm,
 	if (algorithm == KV_ALG_ED25519 || algorithm == KV_ALG_X25519)
 		return (EINVAL);
 
+	/* Reject hash algorithms (no key material) */
+	if (ai->ai_default_bits == 0)
+		return (EINVAL);
+
+	/* Reject HKDF algorithms (derivation functions, not key types) */
+	if (algorithm == KV_ALG_HKDF_SHA256 || algorithm == KV_ALG_HKDF_SHA512)
+		return (EINVAL);
+
 	/* Validate material */
 	if (material == NULL || matlen == 0 || matlen > KV_MAX_KEY_SIZE)
 		return (EINVAL);
+
+	/* Validate key size against algorithm requirements */
+	{
+		uint32_t keybits = matlen * 8;
+		if (keybits < ai->ai_min_bits || keybits > ai->ai_max_bits)
+			return (EINVAL);
+	}
 
 	/* Allocate key structure */
 	kk = malloc(sizeof(*kk), M_KEYVAULT, M_WAITOK | M_ZERO);

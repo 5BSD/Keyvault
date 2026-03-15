@@ -36,111 +36,75 @@ __FBSDID("$FreeBSD$");
  * Used for blocking crypto operations when the driver doesn't
  * support synchronous completion.
  *
- * Heap-allocated to handle timeout race conditions safely.
- * If the caller times out, the callback is responsible for
- * freeing this structure.
+ * Stack-allocated by caller since we always wait for completion.
+ * FreeBSD's crypto subsystem does not support request cancellation,
+ * so we must wait indefinitely - returning early would cause
+ * use-after-free when the callback eventually fires.
  */
 struct kv_crypto_wait {
 	struct mtx	mtx;
 	int		done;
 	int		error;
-	int		timedout;	/* Caller gave up waiting */
 };
 
 /*
  * Crypto callback for synchronous operations
- *
- * If the caller has timed out (cw->timedout set), we are responsible
- * for cleaning up the wait structure since the caller has abandoned it.
  */
 static int
 kv_crypto_callback(struct cryptop *crp)
 {
 	struct kv_crypto_wait *cw;
-	int timedout;
 
 	cw = crp->crp_opaque;
 	mtx_lock(&cw->mtx);
-	timedout = cw->timedout;
-	if (!timedout) {
-		cw->done = 1;
-		cw->error = crp->crp_etype;
-		wakeup(cw);
-	}
+	cw->done = 1;
+	cw->error = crp->crp_etype;
+	wakeup(cw);
 	mtx_unlock(&cw->mtx);
-
-	/*
-	 * If the caller timed out and abandoned the request, we must
-	 * clean up the wait structure. The caller has already returned.
-	 */
-	if (timedout) {
-		mtx_destroy(&cw->mtx);
-		free(cw, M_KEYVAULT);
-	}
 
 	return (0);
 }
 
 /*
- * Crypto operation timeout in seconds.
- * If a crypto operation takes longer than this, it's considered failed.
- */
-#define KV_CRYPTO_TIMEOUT_SECS	30
-
-/*
  * Dispatch a crypto request and wait for completion
  *
  * This handles both synchronous and asynchronous crypto drivers.
- * Includes a timeout to prevent indefinite hangs if the crypto
- * driver misbehaves.
+ * We wait indefinitely because FreeBSD's crypto subsystem does not
+ * support cancelling in-flight requests. If we were to timeout and
+ * return early, the callback would eventually fire and access freed
+ * memory (the cryptop and its buffers), causing memory corruption.
  *
- * The wait structure is heap-allocated to safely handle timeout races.
- * If we timeout, we mark the structure as abandoned and let the callback
- * free it. Otherwise, we free it ourselves after completion.
+ * If a crypto operation hangs, the system has deeper problems that
+ * a timeout cannot solve.
  */
 static int
 kv_crypto_dispatch_sync(struct cryptop *crp)
 {
-	struct kv_crypto_wait *cw;
-	int error, slperror;
+	struct kv_crypto_wait cw;
+	int error;
 
-	cw = malloc(sizeof(*cw), M_KEYVAULT, M_WAITOK | M_ZERO);
-	mtx_init(&cw->mtx, "kvcrypto", NULL, MTX_DEF);
-	cw->done = 0;
-	cw->error = 0;
-	cw->timedout = 0;
+	mtx_init(&cw.mtx, "kvcrypto", NULL, MTX_DEF);
+	cw.done = 0;
+	cw.error = 0;
 
-	crp->crp_opaque = cw;
+	crp->crp_opaque = &cw;
 	crp->crp_callback = kv_crypto_callback;
 
 	error = crypto_dispatch(crp);
 
 	/*
-	 * If crypto_dispatch returns 0 and the callback hasn't been
-	 * called yet, we need to wait for it.
+	 * If crypto_dispatch returns 0 or EINPROGRESS and the callback
+	 * hasn't been called yet, we need to wait for it.
 	 */
 	if (error == 0 || error == EINPROGRESS) {
-		mtx_lock(&cw->mtx);
-		while (!cw->done) {
-			slperror = msleep(cw, &cw->mtx, PWAIT, "kvcrypt",
-			    hz * KV_CRYPTO_TIMEOUT_SECS);
-			if (slperror == EWOULDBLOCK) {
-				/*
-				 * Timeout expired. Mark as timed out so
-				 * the callback knows to free the structure.
-				 * The callback will still fire eventually.
-				 */
-				cw->timedout = 1;
-				mtx_unlock(&cw->mtx);
-				return (ETIMEDOUT);
-			}
-		}
-		error = cw->error;
-		mtx_unlock(&cw->mtx);
+		mtx_lock(&cw.mtx);
+		while (!cw.done)
+			msleep(&cw, &cw.mtx, PWAIT, "kvcrypt", 0);
+		error = cw.error;
+		mtx_unlock(&cw.mtx);
 	}
 
-	mtx_destroy(&cw->mtx);
-	free(cw, M_KEYVAULT);
+	mtx_destroy(&cw.mtx);
 	return (error);
 }
 
@@ -274,7 +238,19 @@ kv_crypto_encrypt(struct kv_file *kf, struct kv_encrypt_req *req)
 	if (error != 0)
 		goto out;
 
-	/* Handle IV */
+	/*
+	 * Handle IV:
+	 * - iv != NULL && iv_len > 0: use provided IV
+	 * - iv == NULL && iv_len == 0: generate random IV
+	 * - iv == NULL && iv_len > 0: error (caller bug)
+	 * - iv != NULL && iv_len == 0: treat as no IV (generate random)
+	 */
+	if (req->iv == NULL && req->iv_len > 0) {
+		/* Caller specified length but no pointer - likely a bug */
+		error = EINVAL;
+		goto out;
+	}
+
 	if (req->iv != NULL && req->iv_len > 0) {
 		if (req->iv_len != ivlen) {
 			error = EINVAL;
@@ -1312,28 +1288,55 @@ kv_crypto_derive(struct kv_file *kf, struct kv_derive_req *req)
 	if (output_alg == 0)
 		output_alg = KV_ALG_HMAC_SHA256;
 
+	/*
+	 * Validate output size against algorithm requirements.
+	 * This catches mismatched sizes early, before doing HKDF.
+	 */
+	if (req->output_bits == 0 || req->output_bits % 8 != 0)
+		return (EINVAL);
+
 	switch (output_alg) {
 	case KV_ALG_AES128_GCM:
-	case KV_ALG_AES256_GCM:
 	case KV_ALG_AES128_CBC:
+		/* AES-128: exactly 128 bits */
+		if (req->output_bits != 128)
+			return (EINVAL);
+		break;
+	case KV_ALG_AES256_GCM:
 	case KV_ALG_AES256_CBC:
 	case KV_ALG_CHACHA20_POLY1305:
+		/* AES-256 and ChaCha20: exactly 256 bits */
+		if (req->output_bits != 256)
+			return (EINVAL);
+		break;
 	case KV_ALG_HMAC_SHA256:
+		/* HMAC-SHA256: 128-512 bits */
+		if (req->output_bits < 128 || req->output_bits > 512)
+			return (EINVAL);
+		break;
 	case KV_ALG_HMAC_SHA512:
+		/* HMAC-SHA512: 256-1024 bits */
+		if (req->output_bits < 256 || req->output_bits > 1024)
+			return (EINVAL);
 		break;
 	default:
 		return (EINVAL);
 	}
 
-	/* Validate output size */
-	if (req->output_bits == 0 || req->output_bits > 8160 * 8)
-		return (EINVAL);
-	if (req->output_bits % 8 != 0)
-		return (EINVAL);
 	okm_len = req->output_bits / 8;
 
-	/* Validate info length */
+	/*
+	 * Validate salt and info.
+	 * Reject len > 0 with NULL pointer to catch caller bugs and
+	 * prevent NULL dereference in HKDF expand (info case).
+	 */
+	if (req->salt_len > KV_HKDF_MAX_SALT_SIZE)
+		return (EINVAL);
+	if (req->salt_len > 0 && req->salt == NULL)
+		return (EINVAL);
 	if (req->info_len > KV_HKDF_MAX_INFO_SIZE)
+		return (EINVAL);
+	if (req->info_len > 0 && req->info == NULL)
 		return (EINVAL);
 
 	/* Acquire source key (IKM) */
